@@ -1,0 +1,13 @@
+.venv/
+.salida/
+.compilacion/
+__pycache__/
+*.pyc
+navegador/extension/_metadata/
+/.playwright-cli/
+/00 EXTENSION/
+/archivo/
+/internos/*.exe
+/tests/.*-temporal/
+.env
+.env.*

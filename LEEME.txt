@@ -1,0 +1,43 @@
+CICERÓN
+
+Para instalar o actualizar, ejecuta Instalar.bat. Si Cicerón está abierto, el instalador te preguntará si puede cerrarlo antes de instalar o reinstalar. Los cambios que no hayas guardado se perderán; puedes cancelar.
+
+Para iniciar Cicerón cuando quieras, haz doble clic en «Abrir Ciceron.bat» o busca «Mi centro» en el menú Inicio. Si ya está funcionando, esto abre su panel. También puedes abrirlo desde el icono junto al reloj de Windows. Si no lo ves, pulsa la flecha ^ de iconos ocultos.
+
+La interfaz V2 se abre como un dock a la derecha. Acerca el cursor a la pestaña del borde para desplegar los iconos. La rueda sigue desplazando la ventana activa al pasar por el dock. El engranaje abre General. Las otras pestañas son Ajustes y Estado. En Ajustes > Interfaz puedes elegir V1 o V2. En batería el dock usa un vidrio básico sin capturar el fondo.
+
+En V2, los iconos de Timer, Navegador, Efectos y Ajustes abren su panel de vidrio pegado al dock. Pulsa el mismo icono para cerrar el panel o usa Escape. El calendario y las opciones de inicio se abren dentro del panel. Para aplicar cambios en el timer, usa Guardar y empezar.
+
+En General, la tarjeta Mis aplicaciones permite importar paquetes y varios accesos a la vez. Pulsa la lupa para buscar por nombre, etiqueta o ruta. Desde el menú ··· de cada aplicación puedes editar sus etiquetas o elegir Inicio de Windows > Añadir acceso para encontrarla por nombre desde Inicio. Quitar un acceso de Cicerón conserva su archivo. En la misma página están Timer y enfoque, Navegador, Efectos de escritorio y el acceso a Aplicaciones instaladas de Windows.
+
+En Ajustes puedes elegir tema claro, oscuro o del sistema y activar o desactivar Liquid Glass. El dock deja ver el fondo real. En corriente combina esa transparencia con una pequeña muestra del escritorio adyacente para refractar el borde. Los paneles de configuración conservan un fondo legible. También puedes decidir si Cicerón muestra la ventana al arrancar o queda en la bandeja. En Estado puedes comprobar la instalación, el acceso del menú Inicio, el arranque automático, tus datos, el vidrio y la conexión con el navegador.
+
+Para quitar la aplicación y su entrada de inicio en el Registro, ejecuta Desinstalar.bat y confirma. Si está abierta, se cerrará tras tu confirmación. La configuración personal se conserva. Entradas o accesos que pertenezcan a otros programas no se eliminan.
+
+La carpeta internos contiene el ejecutable y el instalador. Mantén esa carpeta junto a Instalar.bat y Desinstalar.bat. Para desarrollar la aplicación, consulta DESARROLLO.md.
+
+Si ya habías desactivado el inicio automático desde Cicerón, reinstalarlo conserva esa elección. Al repetir la instalación se reemplaza el ejecutable, incluso si es la misma versión. La desinstalación se puede repetir de forma segura.
+
+El contador se coloca en la barra de tareas, inicialmente hacia la izquierda. Arrástralo horizontalmente para situarlo en un hueco; recordará la posición. Un clic abre la configuración. Si Windows no reserva una barra horizontal suficientemente alta (por ejemplo, con ocultación automática o una barra lateral), el contador se oculta para no tapar ventanas y puedes acceder a la aplicación desde la bandeja.
+
+Para iniciar una cuenta, abre Mi centro, pulsa Configurar, elige fecha y pulsa Guardar y empezar. Sin hora seleccionada, la fecha termina a las 00:00 del día elegido. Para pararla usa Detener. Las fechas guardadas anteriormente conservan su hora hasta que las cambies.
+
+NAVEGADOR (opcional)
+
+Instalar.bat actualiza la carpeta «00 EXTENSION» junto a este archivo y prepara su puente para Chrome, Brave y Edge detectados. Abre Mi centro > Navegador > Preparar navegador, elige el navegador y sigue las instrucciones: activa el modo desarrollador y selecciona la carpeta «00 EXTENSION» junto a Instalar.bat con «Cargar descomprimida». Repite en cada perfil que quieras usar y recarga las pestañas abiertas. Después de actualizar Cicerón, pulsa «Recargar» en la tarjeta de la extensión y recarga las pestañas abiertas. La instalación de extensiones locales requiere este paso manual en cada navegador.
+
+Comprueba que Cicerón navegador funciona antes de desactivar la antigua Pausa Feed; mantener ambas activas duplica las reglas. Al ser una extensión nueva, el estado de pausa anterior no se transfiere automáticamente: revisa si Pausa Feed está activo. Desde Mi centro > Navegador puedes activarlo o pausarlo con la misma frase de antes, y elegir elementos que ocultar en X.
+
+Cicerón funciona sin extensión. La extensión conserva la última configuración recibida de Cicerón si el puente no está disponible. Su menú ofrece Abrir Cicerón. Consulta y cambia el estado en Cicerón → Navegador. El puente no recibe direcciones ni contenido de las páginas. Al desinstalar Cicerón se retira el puente del Registro y se conservan los datos y la carpeta «00 EXTENSION» para que el navegador pueda seguir usándola; para retirarla por completo, elimínala desde la página de extensiones del navegador. Firefox no está incluido.
+
+Mantén la carpeta 00 EXTENSION en su sitio mientras el navegador la use. Si mueves la carpeta de Cicerón, vuelve a cargarla en el navegador y ejecuta Instalar.bat de nuevo.
+
+ESPACIO VISUAL
+
+Abre Efectos de escritorio con el icono de la lente en el dock o desde la ventana clásica. El panel tiene un control para la burbuja y otro para las partículas. Pulsa el mismo control para desactivar su efecto. También puedes apagar ambos desde la bandeja de Windows con «Cerrar efectos visuales».
+
+En la bandeja, «Preparar captura con Cicerón» deja unos tres segundos para abrir un panel o colocar la burbuja. Después, el dock, el panel abierto y la burbuja aparecen en las capturas durante veinte segundos. La refracción conserva la última imagen del fondo mientras haces la captura.
+Paquetes para Cicerón
+En General > Importar aplicaciones puedes instalar un archivo .ciceron.
+La tarjeta del paquete permite abrirlo, configurarlo, consultar sus datos o desinstalarlo.
+Para crear un paquete, consulta docs/paquetes-ciceron.md y el ejemplo en paquetes/ejemplo.

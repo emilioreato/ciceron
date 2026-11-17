@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "local.notas-ejemplo",
+  "version": "1.0.0",
+  "name": "Notas de ejemplo",
+  "description": "Editor pequeño con interfaz propia y preferencias de Cicerón.",
+  "entrypoint": "Notas.exe",
+  "icon": "icono.png",
+  "dock": {"visible": true, "wheel": "passthrough"},
+  "settings": [
+    {"id": "tema", "label": "Tema de la nota", "type": "choice", "choices": ["Papel", "Noche"], "default": "Papel"},
+    {"id": "letra", "label": "Tamaño de letra", "type": "integer", "min": 10, "max": 26, "default": 14},
+    {"id": "encima", "label": "Mantener sobre otras ventanas", "type": "boolean", "default": false},
+    {"id": "titulo", "label": "Título", "type": "text", "default": "Notas de ejemplo"}
+  ]
+}

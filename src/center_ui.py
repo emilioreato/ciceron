@@ -1,0 +1,319 @@
+"""The native Cicerón window and its shared appearance."""
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QFrame, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+
+
+class PreferenceBox(QComboBox):
+    def __init__(self):
+        super().__init__()
+        self.setObjectName('preference')
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self.palette().buttonText().color(), 1.6, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        center = QPointF(self.width() - 14, self.height() / 2)
+        path = QPainterPath(center + QPointF(-3.5, -1.5))
+        path.lineTo(center + QPointF(0, 2))
+        path.lineTo(center + QPointF(3.5, -1.5))
+        painter.drawPath(path)
+
+
+def dark_mode(theme):
+    return theme == 'dark' or (
+        theme == 'system' and QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    )
+
+
+def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
+    if neutral and dark:
+        ink, muted, base, field, stroke, accent = '#f7f7f7', '#ededed', '#252525', '#353535', '#a7a7a7', '#ffffff'
+        surface, highlight, pressed, danger = '#303030', '#454545', '#555555', '#ffb4bd'
+        primary, primary_hover, primary_ink = '#eeeeee', '#ffffff', '#191919'
+    elif monochrome or neutral:
+        ink, muted, base, field, stroke, accent = '#242424', '#555555', '#fafafa', '#ffffff', '#bcbcbc', '#343434'
+        surface, highlight, pressed, danger = '#ffffff', '#eeeeee', '#e0e0e0', '#8b3030'
+        primary, primary_hover, primary_ink = '#343434', '#252525', '#ffffff'
+    elif dark:
+        ink, muted, base, field, stroke, accent = '#fafbff', '#e0e7f5', '#171e30', '#273248', '#8293b3', '#cfdeff'
+        surface = 'rgba(44, 56, 79, 188)' if glass else '#253047'
+        highlight, pressed, danger = '#3a4a69', '#45608c', '#ffb4bd'
+        primary, primary_hover, primary_ink = '#b1caff', '#c8d9ff', '#142543'
+    else:
+        ink, muted, base, field, stroke, accent = '#131e33', '#35415a', '#f0f4fc', '#ffffff', '#8296ba', '#183f82'
+        surface = 'rgba(255, 255, 255, 171)' if glass else '#ffffff'
+        highlight, pressed, danger = '#eaf1ff', '#dce9ff', '#a12840'
+        primary, primary_hover, primary_ink = '#265ebc', '#1c50ab', '#ffffff'
+    rim = 'rgba(198, 220, 255, 80)' if dark else 'rgba(255, 255, 255, 250)'
+    button_fill = (
+        f'qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {field},stop:1 {surface})'
+        if glass else field
+    )
+    styles = f"""
+    QWidget {{ color: {ink}; font-family: "Segoe UI Variable Text", "Segoe UI"; font-size: 14px; }}
+    QDialog, QMenu, QCalendarWidget {{ background: {base}; }}
+    QLabel {{ background: transparent; }}
+    QLabel#title {{ font-size: 34px; font-weight: 650; }}
+    QDialog QLabel#title {{ font-size: 26px; }}
+    QLabel#heading {{ font-size: 16px; font-weight: 650; }}
+    QLabel#muted {{ color: {muted}; }}
+    QLabel#heroTitle {{ color: white; font-size: 31px; font-weight: 650; }}
+    QLabel#heroDetail {{ color: #e3eaff; font-size: 14px; }}
+    QLabel#brand {{ font-size: 21px; font-weight: 650; }}
+    QFrame#sidebar, QFrame#card, QFrame#timeCard {{
+        background: {surface}; border: 1px solid {rim}; border-radius: 20px;
+    }}
+    QFrame#timeCard {{ border-color: {stroke}; }}
+    QPushButton {{
+        background: {button_fill}; border: 1px solid {stroke}; border-radius: 14px;
+        padding: 7px 14px; min-height: 18px; font-weight: 550;
+    }}
+    QPushButton:hover {{ background: {highlight}; border-color: {accent}; }}
+    QPushButton:pressed, QPushButton:checked {{ background: {pressed}; }}
+    QPushButton:focus, QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus, QPlainTextEdit:focus {{
+        border: 1px solid {accent};
+    }}
+    QPushButton:disabled, QComboBox:disabled {{ color: {muted}; background: transparent; }}
+    QPushButton#primary {{ background: {primary}; color: {primary_ink}; border: 1px solid {primary}; }}
+    QPushButton#primary:hover {{ background: {primary_hover}; }}
+    QPushButton#quiet, QPushButton#nav, QPushButton#more {{ background: transparent; border-color: transparent; }}
+    QPushButton#quiet:hover, QPushButton#nav:hover, QPushButton#more:hover {{ background: {highlight}; }}
+    QPushButton#quiet:focus, QPushButton#nav:focus, QPushButton#more:focus {{ border-color: {accent}; }}
+    QPushButton#nav {{ text-align: left; padding: 10px 13px; }}
+    QPushButton#nav:checked {{ color: {accent}; background: {pressed}; border-color: {rim}; }}
+    QPushButton#more {{ padding: 4px 10px; font-size: 18px; }}
+    QPushButton#more::menu-indicator {{ width: 0; }}
+    QPushButton#destructive {{ color: {danger}; }}
+    QPushButton#destructive:disabled {{ color: {muted}; }}
+    QPushButton#heroAction {{ color: white; background: rgba(233,240,255,40); border-color: rgba(233,240,255,125); }}
+    QPushButton#heroAction:hover, QPushButton#heroAction:focus {{ background: rgba(233,240,255,75); }}
+    QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPlainTextEdit {{
+        background: {field}; border: 1px solid {stroke}; border-radius: 11px; padding: 7px 10px; min-height: 19px;
+    }}
+    QTimeEdit:disabled {{ color: {muted}; background: {base}; }}
+    QComboBox QAbstractItemView {{ color: {ink}; background: {field}; selection-background-color: {pressed}; selection-color: {ink}; }}
+    QComboBox#preference {{ padding: 5px 27px 5px 9px; }}
+    QComboBox#preference::drop-down {{ width: 25px; border: 0; background: transparent; }}
+    QComboBox#preference::down-arrow {{ image: none; width: 0; height: 0; }}
+    QCheckBox {{ spacing: 8px; padding: 3px 0; }}
+    QScrollArea {{ border: 0; background: transparent; }}
+    QWidget#pageViewport, QWidget#pageContent, QStackedWidget {{ background: transparent; }}
+    QScrollBar:vertical {{ width: 9px; background: transparent; margin: 2px; }}
+    QScrollBar::handle:vertical {{ min-height: 28px; border-radius: 3px; background: {stroke}; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QMenu {{ border: 1px solid {stroke}; border-radius: 12px; padding: 5px; }}
+    QMenu::item {{ padding: 7px 20px; border-radius: 7px; }}
+    QMenu::item:selected {{ color: {ink}; background: {pressed}; }}
+    QMenu::item:disabled {{ color: {muted}; }}
+    """
+    if not monochrome:
+        styles += """
+        QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard { border-radius: 14px; }
+        QFrame#clockCard { background: qlineargradient(x1:0,y1:1,x2:1,y2:0,stop:0 #244567, stop:1 #3a6082); }
+        QFrame#browserCard { background: qlineargradient(x1:0,y1:1,x2:1,y2:0,stop:0 #285451, stop:1 #3b6864); }
+        QFrame#effectsCard { background: qlineargradient(x1:0,y1:1,x2:1,y2:0,stop:0 #4e3b66, stop:1 #694e7c); }
+        QFrame#appCard { background: qlineargradient(x1:0,y1:1,x2:1,y2:0,stop:0 #293956, stop:1 #455678); }
+        QFrame#clockCard QLabel, QFrame#browserCard QLabel, QFrame#effectsCard QLabel, QFrame#appCard QLabel { color: #f7f7fa; }
+        QWidget QFrame#appCard QPushButton { color: #f7f7fa; background: rgba(233,240,255,40); border-color: rgba(233,240,255,125); }
+        QFrame#appCard QPushButton#more { color: #f7f7fa; background: transparent; }
+        QFrame#appCard QPushButton:hover, QFrame#appCard QPushButton#more:hover,
+        QFrame#appCard QPushButton:focus, QFrame#appCard QPushButton#more:focus { background: rgba(233,240,255,75); }
+        """
+    if glass:
+        control_outline = 'rgba(211, 224, 255, 110)' if dark else 'rgba(40, 61, 102, 100)'
+        styles += f"""
+        QWidget#liveWindow QFrame#sidebar, QWidget#liveWindow QFrame#card,
+        QWidget#liveWindow QFrame#timeCard,
+        QWidget#liveWindow QPushButton, QWidget#liveWindow QLineEdit, QWidget#liveWindow QComboBox,
+        QWidget#liveWindow QAbstractSpinBox, QWidget#liveWindow QPlainTextEdit {{
+            background: transparent; border-color: transparent; color: {ink};
+        }}
+        QWidget#liveWindow QPushButton, QWidget#liveWindow QLineEdit, QWidget#liveWindow QComboBox,
+        QWidget#liveWindow QAbstractSpinBox, QWidget#liveWindow QPlainTextEdit {{
+            border-color: {control_outline};
+        }}
+        QWidget#liveWindow QPushButton#primary, QWidget#liveWindow QPushButton#nav:checked {{
+            color: {accent}; font-weight: 650;
+        }}
+        QWidget#liveWindow QPushButton#destructive:enabled {{ color: {danger}; }}
+        QWidget#liveWindow QPushButton:disabled, QWidget#liveWindow QComboBox:disabled,
+        QWidget#liveWindow QAbstractSpinBox:disabled {{ color: {muted}; }}
+        QWidget#liveWindow QPushButton:focus, QWidget#liveWindow QLineEdit:focus, QWidget#liveWindow QComboBox:focus {{
+            border-color: {accent};
+        }}
+        QWidget#liveWindow QLabel#heroTitle, QWidget#liveWindow QLabel#heroDetail {{
+            color: {ink};
+        }}
+        """
+    return styles
+
+
+class LiveMaterial:
+    def init_material(self):
+        self.dark = False
+        self.glass = True
+        self.transparency = 0.0
+        self.live = False
+        self.material = None
+        self.material_changed = None
+
+    def enable_material(self, enabled, dark):
+        if self.property('dockEmbedded'):
+            return
+        if enabled and self.material is None:
+            try:
+                from window_glass import GlassBackdrop
+                self.material = GlassBackdrop(self, self.set_live)
+            except (ImportError, OSError):
+                return
+        if self.material is not None:
+            self.material.dark = dark
+            self.material.transparency = self.transparency
+            if enabled and self.isVisible():
+                self.material.start()
+            elif not enabled:
+                self.material.stop()
+
+    def set_live(self, live):
+        self.live = live
+        self.setObjectName('liveWindow' if live else '')
+        if self.material_changed:
+            self.material_changed()
+        else:
+            self.setStyleSheet(stylesheet(self.dark, self.glass))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.glass:
+            self.enable_material(True, self.dark)
+
+    def hideEvent(self, event):
+        if self.material is not None:
+            self.material.stop()
+        super().hideEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and not self.isMinimized() and self.glass:
+            self.enable_material(True, self.dark)
+
+
+class GlassDialog(LiveMaterial, QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_material()
+        owner = parent.window() if parent else None
+        self.glass = bool(getattr(owner, 'glass', False))
+        self.dark = getattr(owner, 'dark', False)
+        self.transparency = getattr(owner, 'transparency', 0.0)
+        if self.glass:
+            self.enable_material(True, self.dark)
+
+
+class CenterWindow(LiveMaterial, QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_material()
+        self.monochrome = False
+
+    def paintEvent(self, event):
+        if self.property('dockEmbedded'):
+            return
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor('#fafafa' if self.monochrome else (
+            '#161e2e' if self.dark else '#edf2fb')))
+        if not self.glass:
+            return
+        width, height = self.width(), self.height()
+        spots = (
+            (.10, .12, .66, '#233b64' if self.dark else '#b9cef5'),
+            (.94, .10, .70, '#3d3259' if self.dark else '#dcd1f4'),
+            (.83, 1.0, .65, '#1b464c' if self.dark else '#c1e4e8'),
+        )
+        for x, y, radius, color in spots:
+            glow = QRadialGradient(QPointF(width * x, height * y), width * radius)
+            glow.setColorAt(0, QColor(color))
+            glow.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.fillRect(self.rect(), glow)
+
+
+class LibraryBanner(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(134)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.glass = True
+        self.live = False
+        self.setObjectName('libraryBanner')
+
+    def paintEvent(self, event):
+        if self.live:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bounds = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        outline = QPainterPath()
+        outline.addRoundedRect(bounds, 25, 25)
+        painter.setClipPath(outline)
+        width, height = self.width(), self.height()
+        backdrop = QLinearGradient(0, height, width, 0)
+        backdrop.setColorAt(0, QColor('#163458'))
+        backdrop.setColorAt(.58, QColor('#23365e'))
+        backdrop.setColorAt(1, QColor('#545794'))
+        painter.fillRect(bounds, backdrop if self.glass else QColor('#25395f'))
+        if self.glass:
+            self.draw_glass(painter, width, height)
+        painter.setClipping(False)
+        painter.setPen(QPen(QColor(221, 233, 255, 130), 1))
+        painter.drawPath(outline)
+
+    @staticmethod
+    def draw_glass(painter, width, height):
+        glow = QRadialGradient(QPointF(width * .87, height * .61), height * 1.2)
+        glow.setColorAt(0, QColor(96, 190, 241, 150))
+        glow.setColorAt(1, QColor(96, 190, 241, 0))
+        painter.fillRect(QRectF(0, 0, width, height), glow)
+        for index in range(3):
+            wave = QPainterPath()
+            x = width * .54 + 29 * index
+            wave.moveTo(x - 17, height + 24)
+            wave.cubicTo(x + 131, height * .70, x - 59, height * .35, x + 105, -16)
+            wave.cubicTo(x + 176, -55, width + 115, height * .47, width + 5, height + 22)
+            wave.closeSubpath()
+            tint = QLinearGradient(x - 20, height, width + 8, 0)
+            tint.setColorAt(0, QColor(114, 191, 252, 8))
+            tint.setColorAt(.28, QColor(138, 223, 255, 135))
+            tint.setColorAt(.57, QColor(182, 168, 255, 44))
+            tint.setColorAt(.82, QColor(229, 242, 255, 150))
+            tint.setColorAt(1, QColor(153, 199, 255, 38))
+            painter.fillPath(wave, tint)
+            painter.setPen(QPen(QColor(220, 245, 255, 140 - index * 25), 1.2))
+            painter.drawPath(wave)
+
+
+def panel(name, text, parent=None):
+    label = QLabel(text, parent)
+    label.setObjectName(name)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setWordWrap(True)
+    return label
+
+
+def scrolled_page(parent):
+    scroll = QScrollArea(parent)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.viewport().setObjectName('pageViewport')
+    scroll.viewport().setAutoFillBackground(False)
+    contents = QWidget()
+    contents.setObjectName('pageContent')
+    layout = QVBoxLayout(contents)
+    layout.setContentsMargins(0, 0, 8, 3)
+    layout.setSpacing(8)
+    layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+    scroll.setWidget(contents)
+    contents.setAutoFillBackground(False)
+    return scroll, layout
