@@ -12,7 +12,7 @@ Para actualizar dependencias del entorno, ejecuta `scripts\preparar.bat`.
 
 ## Crear e instalar el ejecutable
 
-Ejecuta `scripts\Crear EXE.bat`: compila el código actual y copia el resultado a `internos\Ciceron.exe` y `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. La instalación es por usuario y conserva los datos. `Desinstalar.bat` elimina la aplicación instalada y conserva la configuración.
+Ejecuta `scripts\Crear EXE.bat`: compila el programa en `internos\Ciceron\Ciceron.exe` con sus dependencias en `internos\Ciceron\_internal`, y genera el puente auxiliar `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. La instalación es por usuario y conserva los datos. `Desinstalar.bat` elimina la aplicación instalada y conserva la configuración.
 
 ## Estructura
 
