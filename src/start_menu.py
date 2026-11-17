@@ -11,6 +11,7 @@ from app_packages import APP_ID, RESERVED, atomic_json, json_object
 
 
 MARKER = 'Ciceron.Library:'
+BUILTIN_TOOLS = frozenset(('clock', 'browser', 'effects'))
 
 
 def shortcut_id(item):
@@ -88,10 +89,12 @@ class StartMenuApps:
                 path.unlink(missing_ok=True)
 
 
-def request_launch(folder, app_id):
-    if len(app_id) > 80 or not APP_ID.fullmatch(app_id):
+def request_launch(folder, app_id, *, builtin=False):
+    if builtin and app_id not in BUILTIN_TOOLS:
+        raise ValueError('Aplicación interna desconocida.')
+    if not builtin and (len(app_id) > 80 or not APP_ID.fullmatch(app_id)):
         raise ValueError('Identificador de paquete inválido.')
-    atomic_json(folder / (uuid.uuid4().hex + '.json'), {'id': app_id})
+    atomic_json(folder / (uuid.uuid4().hex + '.json'), {'tool' if builtin else 'id': app_id})
 
 
 def pending_launches(folder):
@@ -99,14 +102,18 @@ def pending_launches(folder):
         if not re.fullmatch(r'[a-f0-9]{32}', path.stem):
             continue
         try:
-            app_id = json_object(path).get('id')
+            request = json_object(path)
         except ValueError:
-            app_id = None
+            request = {}
         except OSError:
             continue
         try:
             path.unlink()
         except OSError:
             continue
-        if isinstance(app_id, str) and APP_ID.fullmatch(app_id):
-            yield app_id
+        tool = request.get('tool')
+        app_id = request.get('id')
+        if isinstance(tool, str) and tool in BUILTIN_TOOLS:
+            yield 'tool', tool
+        elif isinstance(app_id, str) and APP_ID.fullmatch(app_id):
+            yield 'package', app_id

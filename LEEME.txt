@@ -2,7 +2,7 @@ CICERÓN
 
 Para instalar o actualizar, ejecuta Instalar.bat. Si Cicerón está abierto, el instalador te preguntará si puede cerrarlo antes de instalar o reinstalar. Los cambios que no hayas guardado se perderán; puedes cancelar.
 
-Para iniciar Cicerón cuando quieras, haz doble clic en «Abrir Ciceron.bat» o busca «Mi centro» en el menú Inicio. Si ya está funcionando, esto abre su panel. También puedes abrirlo desde el icono junto al reloj de Windows. Si no lo ves, pulsa la flecha ^ de iconos ocultos.
+Para iniciar Cicerón cuando quieras, haz doble clic en «Abrir Ciceron.bat» o busca «Cicerón» en el menú Inicio. Si ya está funcionando, esto abre su panel. También puedes abrirlo desde el icono junto al reloj de Windows. Si no lo ves, pulsa la flecha ^ de iconos ocultos.
 
 La interfaz V2 se abre como un dock a la derecha. Acerca el cursor a la pestaña del borde para desplegar los iconos. La rueda sigue desplazando la ventana activa al pasar por el dock. El engranaje abre General. Las otras pestañas son Ajustes y Estado. En Ajustes > Interfaz puedes elegir V1 o V2. En batería el dock usa un vidrio básico sin capturar el fondo.
 

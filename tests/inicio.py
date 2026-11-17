@@ -2,6 +2,7 @@
 import importlib.machinery, importlib.util, os, sys, tempfile
 from pathlib import Path
 import sys
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -13,7 +14,8 @@ with tempfile.TemporaryDirectory() as tmp:
     module = importlib.util.module_from_spec(spec); loader.exec_module(module)
     module.write(module.CONFIG, dict(module.DEFAULT, show_timer=False, guardian=False))
     app = module.QApplication([]); app.setQuitOnLastWindowClosed(False)
-    controller = module.App()
+    with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=True):
+        controller = module.App()
 
     class Key:
         def __enter__(self): return self
@@ -33,7 +35,7 @@ with tempfile.TemporaryDirectory() as tmp:
     warnings = []
     module.QMessageBox.warning = lambda *args: warnings.append(args[-1])
     original_executable = sys.executable
-    installed = str(Path(tmp) / 'GanaLaBatalla' / 'Ciceron.exe')
+    installed = str(Path(tmp) / 'Ciceron' / 'Ciceron.exe')
     try:
         def interact(enable, change=None, enabled=True):
             def answer():
@@ -55,14 +57,14 @@ with tempfile.TemporaryDirectory() as tmp:
         sys.executable = installed
         other = (str(Path(tmp) / 'otro.exe'), registry.REG_SZ)
         interact(True, change=other)
-        assert registry.current == other and not registry.writes and warnings
+        assert registry.current == other and not registry.writes and warnings, (registry.current, registry.writes, warnings)
         # The installed app can turn its own entry on and off.
         registry.current = None; warnings.clear()
         interact(True)
         assert registry.current == ('"' + installed + '"', registry.REG_SZ)
         interact(False)
         assert registry.current is None
-        registry.current = ('"%LOCALAPPDATA%\\GanaLaBatalla\\Ciceron.exe"', registry.REG_EXPAND_SZ)
+        registry.current = ('"%LOCALAPPDATA%\\Ciceron\\Ciceron.exe"', registry.REG_EXPAND_SZ)
         interact(False)
         assert registry.current is None
         print('Inicio: copia externa, concurrencia, rutas expandibles y activación/desactivación verificados')

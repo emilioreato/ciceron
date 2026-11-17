@@ -11,7 +11,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $program 'Google\Chrome\Application\chrome.exe'),'simulado')
     [IO.File]::WriteAllText((Join-Path $program 'Microsoft\Edge\Application\msedge.exe'),'simulado')
     $env:LOCALAPPDATA=$local; $env:APPDATA=$app; $env:ProgramFiles=$program; ${env:ProgramFiles(x86)}=$program
-    $installDir=Join-Path $local 'GanaLaBatalla'
+    $installDir=Join-Path $local 'Ciceron'
     $setup=Join-Path $PSScriptRoot '..\internos\instalar_navegador.ps1'
     $uninstall=Join-Path $PSScriptRoot '..\internos\desinstalar.ps1'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setup -PackageRoot $package -InstallDir $installDir -RegistryRoot $key

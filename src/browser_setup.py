@@ -27,7 +27,7 @@ def detected():
 
 def prepare(browser):
     if browser not in KEYS: raise ValueError('Navegador no compatible.')
-    root=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'GanaLaBatalla'
+    root=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'Ciceron'
     manifest=root/'ciceron-native-host.json'
     if not manifest.is_file(): raise ValueError('Falta el puente nativo. Ejecuta Instalar.bat desde el paquete completo de Cicerón.')
     try: data=json.loads(manifest.read_text(encoding='utf-8'))

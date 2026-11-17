@@ -37,16 +37,7 @@ class DockBackdropCapture:
         self.lens = None
         self.wake = threading.Event()
         self.closed = threading.Event()
-        self.factory = None
-        try:
-            import comtypes
-            import dxcam
-            import numpy
-            self.com = comtypes
-            self.numpy = numpy
-            self.factory = getattr(dxcam, '__factory')
-        except (ImportError, OSError, RuntimeError, AttributeError):
-            pass
+        self.factory = self.numpy = None
         self.thread = threading.Thread(target=self.run, name='Ciceron-Dock', daemon=True)
         self.thread.start()
 
@@ -57,7 +48,6 @@ class DockBackdropCapture:
     def close(self):
         self.closed.set()
         self.wake.set()
-        self.thread.join(timeout=.25)
 
     def lens_reader(self):
         self.lens = SharedLensCapture(self)
@@ -133,12 +123,17 @@ class DockBackdropCapture:
         retry = 0.0
         initialized = False
         try:
-            if self.factory is not None:
-                try:
-                    self.com.CoInitialize()
-                    initialized = True
-                except self.com.COMError:
-                    pass
+            try:
+                import numpy
+                self.numpy = numpy
+                import comtypes
+                import dxcam
+                self.com = comtypes
+                self.factory = getattr(dxcam, '__factory')
+                self.com.CoInitialize()
+                initialized = True
+            except (ImportError, OSError, RuntimeError, AttributeError):
+                pass
             while not self.closed.is_set():
                 lens = self.lens
                 lens_request = lens.request if lens is not None else None
@@ -208,7 +203,7 @@ class DockBackdropCapture:
                 if lens_request is not None and not lens.closed.is_set() and lens.request is not None:
                     if lens_frame is not None:
                         lens.latest, lens.backend = lens_frame, 'dxgi'
-                    elif lens_request[4] is not None and (lens.latest is None or
+                    elif self.numpy is not None and lens_request[4] is not None and (lens.latest is None or
                                                          time.perf_counter() - lens.latest[3] > .032):
                         origin, size, _, _, physical = lens_request
                         raw = lens_gdi.read_bgra(*physical, size, size, include_layered=True)
@@ -234,15 +229,6 @@ class DockBackdropCapture:
 
 class LensCapture:
     def __init__(self):
-        # COM modules and DXcam's global adapter factory are first loaded on
-        # the main thread. Each capture thread initializes COM separately.
-        import comtypes
-        import dxcam
-        import numpy
-
-        self.com = comtypes
-        self.dxcam = dxcam
-        self.numpy = numpy
         self.request = None
         self.latest = None
         self.error = None
@@ -268,21 +254,25 @@ class LensCapture:
     def capture(self):
         cameras = {}
         gdi = BackdropCapture()
-        use_gdi = False
         initialized = False
-        dxcam, np = self.dxcam, self.numpy
         try:
-            self.com.CoInitialize()
-            initialized = True
-
-            # DXcam 0.3 filters adapters without outputs. Match Qt's display
-            # device name against the same discovery order used by create().
-            outputs = {
-                output.devicename.casefold(): (device_idx, output_idx)
-                for device_idx, device in enumerate(getattr(dxcam, '__factory').outputs)
-                for output_idx, output in enumerate(device)
-            }
+            import numpy as np
+            try:
+                import comtypes
+                import dxcam
+                comtypes.CoInitialize()
+                initialized = True
+                # DXcam filters adapters without outputs. Use the same ordering as create().
+                outputs = {
+                    output.devicename.casefold(): (device_idx, output_idx)
+                    for device_idx, device in enumerate(getattr(dxcam, '__factory').outputs)
+                    for output_idx, output in enumerate(device)
+                }
+            except (ImportError, OSError, RuntimeError, AttributeError):
+                outputs = {}
+            use_gdi = not outputs
             cached_tiles = {}
+            last_blit = 0.0
             while not self.closed.is_set():
                 request = self.request
                 if request is None:
@@ -291,17 +281,8 @@ class LensCapture:
                     continue
                 start = time.perf_counter()
                 origin, size, interval, regions, physical = request
-                if use_gdi:
-                    if physical is not None:
-                        raw = gdi.read_bgra(*physical, size, size, include_layered=True)
-                        if raw is not None:
-                            pixels = np.frombuffer(raw, dtype=np.uint8).reshape(size, size, 4).copy()
-                            pixels[:, :, 3] = 255
-                            self.latest = (origin, size, pixels, start)
-                    self.closed.wait(max(0, interval - (time.perf_counter() - start)))
-                    continue
                 changed = False
-                for name, bounds, target in regions:
+                for name, bounds, target in (() if use_gdi else regions):
                     try:
                         if name not in cameras:
                             device_idx, output_idx = outputs[name]
@@ -309,7 +290,7 @@ class LensCapture:
                                                          processor_backend='numpy', backend='dxgi')
                             self.backend = 'dxgi'
                         frame = cameras[name].grab(region=bounds)
-                    except (OSError, RuntimeError, KeyError, ValueError, self.com.COMError):
+                    except (OSError, RuntimeError, KeyError, ValueError, comtypes.COMError):
                         # On hybrid GPUs use a native blit. Graphics Capture
                         # would put a capture indicator around the monitor.
                         use_gdi = True
@@ -333,7 +314,15 @@ class LensCapture:
                             cols = np.arange(width) * frame.shape[1] // width
                             frame = frame[rows[:, None], cols]
                         pixels[y:y + height, x:x + width] = frame
-                    self.latest = (origin, size, pixels, start)
+                    self.latest, self.backend = (origin, size, pixels, start), 'dxgi'
+                elif physical is not None and start - last_blit >= 1 / 30 and (
+                        self.latest is None or self.latest[0] != origin or start - self.latest[3] >= .12):
+                    last_blit = start
+                    raw = gdi.read_bgra(*physical, size, size, include_layered=True)
+                    if raw is not None:
+                        pixels = np.frombuffer(raw, dtype=np.uint8).reshape(size, size, 4).copy()
+                        pixels[:, :, 3] = 255
+                        self.latest, self.backend = (origin, size, pixels, start), 'gdi'
                 self.closed.wait(max(0, interval - (time.perf_counter() - start)))
         except Exception as error:
             self.error = str(error) or type(error).__name__
@@ -342,4 +331,4 @@ class LensCapture:
             for camera in cameras.values():
                 camera.release()
             if initialized:
-                self.com.CoUninitialize()
+                comtypes.CoUninitialize()

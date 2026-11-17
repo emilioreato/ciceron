@@ -1,5 +1,7 @@
 # Cicerón
 
+<img src="assets/ciceron.png" alt="Icono de Cicerón" width="96">
+
 Cicerón es un centro de control para aplicaciones personales de Windows. Su barra lateral reúne accesos, aplicaciones empaquetadas, un temporizador, efectos de escritorio y los controles de Pausa Feed del navegador.
 
 ## Ejecutar desde el código
@@ -9,7 +11,7 @@ Cicerón es un centro de control para aplicaciones personales de Windows. Su bar
 
 ## Compilar e instalar
 
-Ejecuta `scripts\Crear EXE.bat` y después `Instalar.bat`. Una vez instalado, abre Cicerón con `Abrir Ciceron.bat` o busca **Mi centro** en Inicio.
+Ejecuta `scripts\Crear EXE.bat` y después `Instalar.bat`. Una vez instalado, abre Cicerón con `Abrir Ciceron.bat` o busca **Cicerón** en Inicio.
 
 - [Guía de uso](LEEME.txt)
 - [Desarrollo y pruebas](DESARROLLO.md)

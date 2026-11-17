@@ -13,6 +13,17 @@ VERTEX = '''#version 120
 varying vec2 uv;
 void main() { gl_Position = gl_Vertex; uv = gl_MultiTexCoord0.xy; }
 '''
+# Inverse optical map, in screen pixels. The lip skips the first strip of
+# background, then packs the next strip into a narrow band of glass.
+EDGE_OPTICS = '''
+float lip_inset(float depth, float width) {
+    float t = clamp(depth / width, 0.0, 1.0);
+    // The steepest bend is at the silhouette. A nearby line can run along
+    // the lip before it is visible across the flatter face of the glass.
+    return width * 0.94 * (1.0 - t) * (1.0 - t);
+}
+'''
+
 FRAGMENT = '''#version 120
 uniform sampler2D backdrop;
 uniform float pixels;
@@ -29,6 +40,7 @@ uniform vec2 sample_scale;
 uniform vec2 motion;
 uniform float appearance;
 varying vec2 uv;
+''' + EDGE_OPTICS + '''
 void main() {
     bool interface_glass = body_height > 0.0;
     float tall = panel_radius > 0.0 ? body_height : max(body_height, pixels);
@@ -59,7 +71,8 @@ void main() {
             return;
         }
         float bevel = smoothstep(0.74, 0.94, edge);
-        vec2 lookup = vec2(0.5) + (spine + (p * 0.392 + normal * 0.092 * bevel) * diameter) / extent;
+        float depth = (0.975 - edge) * diameter * 0.5;
+        vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
         float blur = glass_blur + (appearance - 1.0) * 3.0;
         vec3 color = texture2D(backdrop, coord, blur).rgb;
@@ -79,7 +92,7 @@ void main() {
                 float blue = texture2D(backdrop, sample_origin + clamp(lookup - fringe, 0.0, 1.0) * sample_scale).b;
                 edge_color.rb = mix(edge_color.rb, vec2(red, blue), 0.44 * smoothstep(0.06, 0.30, chroma));
             }
-            color = mix(color, edge_color, bevel * 0.82);
+            color = mix(color, edge_color, bevel * 0.90);
             float light = clamp(0.4 - normal.y * 0.47 - normal.x * 0.22, 0.0, 1.0);
             float reflection = smoothstep(0.79, 0.95, edge);
             color *= 1.0 - reflection * (0.07 + 0.18 * (1.0 - light));
@@ -106,36 +119,44 @@ void main() {
     float bevel = smoothstep(0.74, 0.94, edge);
     vec2 tangent = vec2(-normal.y, normal.x);
     vec2 unit = diameter / extent;
-    vec2 lookup = vec2(0.5) + spine / extent + p * 0.392 * unit;
-    lookup += normal * (0.092 * bevel + 0.032 * wave) * unit;
+    float depth = (0.975 - edge) * diameter * 0.5;
+    float width = diameter * 0.18;
+    float body_inset = r * diameter * 0.085 * smoothstep(0.0, width, depth);
+    vec2 lookup = local - normal * (body_inset + lip_inset(depth, width)) / extent;
+    lookup += normal * (0.018 * wave) * unit;
     lookup += tangent * (cos(phase) * shoulder * energy * 0.014) * unit;
     if (energy > 0.025) {
         vec2 travel = normalize(motion);
         float front = smoothstep(0.28, 0.94, dot(normal, travel));
-        float depth = (0.975 - edge) * pixels * 0.5;
         float hold = 1.0 - smoothstep(5.0, 7.1, depth);
         float crest = smoothstep(4.6, 5.7, depth) * (1.0 - smoothstep(7.0, 9.0, depth));
         float displacement = (7.2 * hold - 3.4 * crest) * front * smoothstep(0.025, 0.31, energy);
         lookup -= travel * displacement / extent;
     }
-    vec4 source = texture2D(backdrop, sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale);
+    vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
+    // Four bilinear taps give a separable, Gaussian-like 3x3 footprint.
+    vec2 delta = (0.30 + 0.20 * bevel) * sample_scale / extent;
+    vec4 source = 0.25 * (texture2D(backdrop, coord + delta)
+                        + texture2D(backdrop, coord - delta)
+                        + texture2D(backdrop, coord + vec2(delta.x, -delta.y))
+                        + texture2D(backdrop, coord + vec2(-delta.x, delta.y)));
     // The green channel follows refraction; red and blue sample either side near the lip.
-    float prism = smoothstep(0.84, 0.95, edge);
+    float prism = smoothstep(0.79, 0.935, edge);
     if (prism > 0.0) {
         float lobe = 0.55 + 0.45 * cos(2.0 * angle + 1.65 - lead * 2.0);
-        float spread = prism * (1.45 + 1.65 * lobe + 0.65 * energy * max(lead, 0.0));
+        float spread = prism * (1.60 + 1.80 * lobe + 0.65 * energy * max(lead, 0.0));
         vec2 fringe = (normal + tangent * (0.20 * lead)) * (spread / extent);
-        float red = texture2D(backdrop, sample_origin + clamp(lookup + fringe, 0.0, 1.0) * sample_scale).r;
-        float blue = texture2D(backdrop, sample_origin + clamp(lookup - fringe, 0.0, 1.0) * sample_scale).b;
+        float red = texture2D(backdrop, sample_origin + clamp(lookup - fringe, 0.0, 1.0) * sample_scale).r;
+        float blue = texture2D(backdrop, sample_origin + clamp(lookup + fringe, 0.0, 1.0) * sample_scale).b;
         vec2 split = vec2(red, blue) - source.rb;
         float strength = 0.44 + lobe * 0.33 + energy * 0.10;
-        source.rb += prism * clamp(split * strength, -0.16, 0.16);
+        source.rb += prism * clamp(split * strength, -0.18, 0.18);
     }
     float aa = 1.5 / diameter;
     float mask = 1.0 - smoothstep(0.975-aa, 0.975, edge);
     float light = clamp(0.4 - normal.y * 0.47 - normal.x * 0.22 + 0.25 * wave, 0.0, 1.0);
     float rim = smoothstep(0.946, 0.968, edge) * (1.0-smoothstep(0.970, 0.977, edge));
-    vec3 color = mix(source.rgb, vec3(1.0), 0.12 * rim * light);
+    vec3 color = mix(source.rgb, vec3(1.0), rim * (0.06 + 0.18 * light));
     float alpha = source.a * mask * appearance;
     gl_FragColor = vec4(color * alpha, alpha);
 }
@@ -207,7 +228,7 @@ class DesktopBubble(QOpenGLWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         fmt=QSurfaceFormat(); fmt.setVersion(2,1); fmt.setAlphaBufferSize(8); fmt.setSwapInterval(0); self.setFormat(fmt)
-        self.setWindowTitle('Burbuja de Cicerón'); self.setFixedSize(128,128)
+        self.setWindowTitle('Burbuja de Cicerón'); self.setFixedSize(116,116)
         self.frame=None; self.program=None; self.texture=None; self.gl_error=None; self.frame_dirty=False; self.texture_size=None; self.started=time.monotonic()
         self.dock_provider = dock_provider
         self.surface_patches = []
@@ -217,9 +238,7 @@ class DesktopBubble(QOpenGLWidget):
         self.capture_source = object()
         self.native_frame = None
         self.last_native_sample = (0.0, 0.0)
-        self.native_started = 0.0
         self.last_request = None
-        self.last_fallback = 0.0
         self.photo_timer = QTimer(self)
         self.photo_timer.setSingleShot(True)
         self.photo_timer.timeout.connect(self.resume_capture)
@@ -245,7 +264,6 @@ class DesktopBubble(QOpenGLWidget):
         if not set_affinity(int(self.winId()), 0x11):
             self.close()
             raise RuntimeError('Windows no permitió separar el fondo de la lente.')
-        self.capture()
         self.tick()
         self.timer.start()
         self.raise_()
@@ -260,7 +278,8 @@ class DesktopBubble(QOpenGLWidget):
         screen = QApplication.screenAt(QCursor.pos())
         if screen is None:
             return
-        interval = 1 / min(240, max(30, screen.refreshRate()))
+        # Leave time for Qt to dispatch input and compose the other windows.
+        interval = 1 / min(60, max(30, screen.refreshRate()))
         timer_ms = max(4, round(1000 * interval))
         if self.timer.interval() != timer_ms:
             self.timer.setInterval(timer_ms)
@@ -271,7 +290,7 @@ class DesktopBubble(QOpenGLWidget):
         was_moving = self.motion.manhattanLength() > 0.01
         self.motion = pointer_motion(self.motion, self.pos() - previous_position, dt)
         self.update_surface_patches(now)
-        self.select_capture(now)
+        self.select_capture()
         if self.worker is not None:
             request = self.capture_request(screen, interval)
             if request != self.last_request:
@@ -288,31 +307,20 @@ class DesktopBubble(QOpenGLWidget):
                     self.last_native_sample = ((self.x() - x) * dpr / size,
                                                (self.y() - y) * dpr / size)
                     self.frame_dirty = True
-                if self.native_frame is not None and self.tile_covers_window(self.native_frame):
-                    if self.frame is not None:
-                        self.frame = None
-                        self.frame_dirty = True
-                    if self.frame_dirty or was_moving or previous_position != self.pos():
-                        self.update()
-                    return
-                if now - max(self.native_started, self.native_frame[3] if self.native_frame else 0) < 0.12:
-                    self.update()
-                    return
-        if now - self.last_fallback >= 1 / 30:
-            self.last_fallback = now
-            self.capture()
+        if self.native_frame is not None and (
+                self.frame_dirty or was_moving or previous_position != self.pos()):
+            self.update()
 
-    def select_capture(self, now):
+    def select_capture(self):
         dock = self.dock_provider() if self.dock_provider is not None else None
         source = dock.backdrop if dock is not None else None
-        if source is not None and (source.factory is None or source.closed.is_set()):
+        if source is not None and source.closed.is_set():
             source = None
         if self.capture_source is source:
             return
         self.stop_capture_worker()
         self.capture_source = source
         self.last_request = None
-        self.native_started = now
         try:
             self.worker = source.lens_reader() if source is not None else LensCapture()
         except (ImportError, OSError, RuntimeError) as error:
@@ -322,9 +330,6 @@ class DesktopBubble(QOpenGLWidget):
         if self.worker is None:
             return
         self.worker.close()
-        thread = getattr(self.worker, 'thread', None)
-        if thread is not None:
-            thread.join(timeout=.25)
         self.worker = None
 
     def capture_request(self, screen, interval):
@@ -388,30 +393,6 @@ class DesktopBubble(QOpenGLWidget):
         self.surface_patches = patches
         self.frame_dirty = True
 
-    def capture(self):
-        screen = QApplication.screenAt(QCursor.pos())
-        if screen is None:
-            return
-        dpr = screen.devicePixelRatio()
-        size = max(2, round(self.width() * dpr))
-        frame = QImage(size, size, QImage.Format.Format_RGBA8888)
-        frame.setDevicePixelRatio(dpr)
-        frame.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(frame)
-        for monitor in QApplication.screens():
-            geo = monitor.geometry()
-            intersection = self.geometry().intersected(geo)
-            if not intersection.isEmpty():
-                pixmap = monitor.grabWindow(0, intersection.x()-geo.x(), intersection.y()-geo.y(),
-                                            intersection.width(), intersection.height())
-                if not pixmap.isNull():
-                    painter.drawPixmap(intersection.topLeft()-self.geometry().topLeft(), pixmap)
-        painter.end()
-        self.frame = frame
-        self.frame_origin = self.pos()
-        self.frame_dirty = True
-        self.update()
-
     def show_in_screenshots(self):
         if not self.isVisible() or not set_affinity(int(self.winId()), 0):
             return False
@@ -431,7 +412,7 @@ class DesktopBubble(QOpenGLWidget):
         self.native_frame = None
         if self.worker is not None:
             self.worker.latest = None
-        self.capture()
+        self.tick()
         self.timer.start()
 
     def paintGL(self):

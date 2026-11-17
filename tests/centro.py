@@ -1,13 +1,15 @@
 """Exercise navigation and library changes against isolated user data."""
 import importlib.machinery
 import importlib.util
+from ctypes import addressof, wintypes
 import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-from PySide6.QtCore import QEvent
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF
+from PySide6.QtGui import QKeyEvent, QWheelEvent
+from PySide6.QtTest import QTest
 
 
 root = Path(__file__).resolve().parents[1]
@@ -23,6 +25,24 @@ with TemporaryDirectory() as temporary:
     app.setQuitOnLastWindowClosed(False)
     with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=True):
         center = module.App()
+    kernel = module.ctypes.windll.kernel32
+    kernel.CreateEventW.argtypes = [module.ctypes.c_void_p, module.ctypes.c_int, module.ctypes.c_int, module.ctypes.c_wchar_p]
+    kernel.CreateEventW.restype = module.ctypes.c_void_p
+    kernel.SetEvent.argtypes = [module.ctypes.c_void_p]
+    kernel.CloseHandle.argtypes = [module.ctypes.c_void_p]
+    kernel.WaitForSingleObject.argtypes = [module.ctypes.c_void_p, module.ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = module.ctypes.c_ulong
+    event = kernel.CreateEventW(None, False, False, None)
+    assert event
+    activated = []
+    watcher = module.watch_activation_event(app, kernel, event, lambda: activated.append(True))
+    assert not module.activation_event_signaled(kernel, event)
+    kernel.SetEvent(event)
+    QTest.qWait(220)
+    assert activated == [True]
+    assert not module.activation_event_signaled(kernel, event)
+    watcher.stop()
+    kernel.CloseHandle(event)
     assert center.dock.isVisible() and center.dock.handle.isVisible()
     assert center.dock.panel is None and center.dock.progress == 0.0
     center.open_center()
@@ -30,19 +50,53 @@ with TemporaryDirectory() as temporary:
     assert set(center.page_ids) == {'general', 'settings', 'status'}
     assert center.import_button.parentWidget() is center.banner
     assert center.app_search.isHidden()
-    assert center.window.property('localWheel')
 
     for name, index in center.page_ids.items():
         center.nav.button(index).click()
         assert center.pages.currentIndex() == index, name
 
     center.select_page('settings')
-    assert not center.window.property('localWheel')
+    wheel_filter = center.wheel_filter
+    msg = wintypes.MSG()
+    msg.hWnd = 100
+    with patch('edge_dock.root_window', side_effect=lambda handle, _: handle), \
+            patch('edge_dock.foreground_window', side_effect=[200, 100]), \
+            patch('edge_dock.is_external_window', side_effect=lambda handle: handle == 200), \
+            patch('edge_dock.window_belongs_to', return_value=False), \
+            patch('edge_dock.forward_wheel', return_value=True) as forward:
+        msg.message = 0x0021  # click while the other app still owns focus
+        assert wheel_filter.nativeEventFilter(b'windows_generic_MSG', addressof(msg)) == (False, 0)
+        msg.message = 0x020A  # wheel over Ajustes while Cicerón has focus
+        assert wheel_filter.nativeEventFilter(b'windows_generic_MSG', addressof(msg)) == (True, 0)
+        assert forward.call_args.args[0::2] == (100, 200)
     theme = next(widget for widget in center.window.findChildren(module.QComboBox)
                  if widget.accessibleName() == 'Tema')
     theme.setCurrentIndex(theme.findData('dark'))
     assert center.window.dark
     assert module.read(module.CONFIG, {})[0]['theme'] == 'dark'
+    assert not any(btn.text() == 'Aplicaciones instaladas de Windows'
+                   for btn in center.window.findChildren(module.QPushButton))
+    center.select_page('status')
+    app.processEvents()
+    page = center.pages.currentWidget()
+    bar = page.verticalScrollBar()
+    assert bar.maximum() > 0
+    wheel = QWheelEvent(QPointF(10, 10), QPointF(), QPoint(), QPoint(0, -120),
+                        module.Qt.MouseButton.NoButton, module.Qt.KeyboardModifier.NoModifier,
+                        module.Qt.ScrollPhase.NoScrollPhase, False)
+    app.sendEvent(page.viewport(), wheel)
+    assert wheel.isAccepted() and bar.value() == 0
+    QTest.qWait(200)
+    assert bar.value() > 0
+    for tool in ('clock', 'browser', 'effects'):
+        module.request_launch(module.LAUNCH_REQUESTS, tool, builtin=True)
+        center.launch_requested_apps()
+        opened = center.dock.panel
+        assert opened.key == tool and opened.isVisible()
+        module.request_launch(module.LAUNCH_REQUESTS, tool, builtin=True)
+        center.launch_requested_apps()
+        assert center.dock.panel is opened
+    center.open_center()
 
     paths = [Path(temporary) / name for name in ('Editor.cmd', 'Notas.cmd', 'Nuevo.cmd')]
     for path in paths:
@@ -84,15 +138,27 @@ with TemporaryDirectory() as temporary:
     chooser = next(widget for widget in center.window.findChildren(module.QComboBox)
                    if widget.accessibleName() == 'Versión de la interfaz')
     chooser.setCurrentIndex(chooser.findData('v1'))
+    app.processEvents()
+    app.processEvents()
     assert center.classic.isVisible() and not center.window.isVisible()
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
+    center.classic.hide()
+    center.open_center()
+    assert center.classic.isVisible()
+    center.classic.close()
+    center.open_center()
+    assert center.classic.isVisible()
     center.open_page('settings')
     chooser.setCurrentIndex(chooser.findData('v2'))
+    app.processEvents()
+    app.processEvents()
     assert center.dock.isVisible() and not center.classic.isVisible()
     assert center.dock.geometry().right() == center.dock.screen.availableGeometry().right()
     assert [entry.accessibleName() for entry in center.dock.entries] == [
         'Timer', 'Navegador', 'Efectos de escritorio', 'Editor']
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v2'
+    assert center.dock.panel.key == 'settings' and center.window.isVisible()
+    center.dock.panel.close()
     dock = center.dock
     dock.progress = 1
     dock.layout_icons()

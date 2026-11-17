@@ -47,13 +47,46 @@ def run():
                 interior = (x for x in range(int(size*.68), int(size*.82))
                             if bent.pixelColor(x, y).alpha() > 240)
                 return min(interior, key=lambda x: bent.pixelColor(x, y).green())
-            assert line_x(size//8) < line_x(size//2), 'El borde no refracta la línea.'
+            assert line_x(size//8) > line_x(size//2), 'El borde no curva la línea hacia el contorno.'
             fringe = [abs(color.red() - color.blue()) for y in range(size) for x in range(size)
                       if (color := bent.pixelColor(x, y)).alpha() > 245]
-            assert 26 <= max(fringe) <= 82, f'Separación de canales fuera del rango esperado: {max(fringe)}.'
+            assert 40 <= max(fringe) <= 94, f'Separación de canales fuera del rango esperado: {max(fringe)}.'
             y = size // 2
             assert all(abs(bent.pixelColor(x, y).red() - bent.pixelColor(x, y).blue()) <= 2
                        for x in range(size // 7, size * 6 // 7)), 'El color invade el centro.'
+            # Slide the background under stationary glass at native resolution.
+            # Its first few pixels disappear, then a compressed dark strip emerges.
+            lip = round(size * 0.9875)
+            def visible_strip(penetration):
+                strip = QImage(size, size, QImage.Format.Format_RGBA8888)
+                strip.fill(QColor('white'))
+                painter = QPainter(strip)
+                painter.fillRect(lip - penetration, 0, size, size, QColor('black'))
+                painter.end()
+                bubble.frame, bubble.frame_dirty = strip, True
+                frame = bubble.grabFramebuffer()
+                return sum(frame.pixelColor(x, size // 2).green() < 100
+                           for x in range(size // 2, lip)
+                           if frame.pixelColor(x, size // 2).alpha() > 245)
+            assert visible_strip(round(size * .025)) == 0
+            penetration = round(size * .18)
+            assert 0 < visible_strip(penetration) < penetration
+            assert visible_strip(size // 3) > penetration
+            # At the diagonal lip the black band touches glass over a white
+            # background pixel. The white cap is still visible at the apex.
+            band = QImage(size, size, QImage.Format.Format_RGBA8888)
+            band.fill(QColor('white'))
+            painter = QPainter(band)
+            painter.fillRect(0, round(size * .215), size, size, QColor('black'))
+            painter.end()
+            bubble.frame, bubble.frame_dirty = band, True
+            contact = bubble.grabFramebuffer()
+            tip = round(size * .16)
+            for x in (tip, size - 1 - tip):
+                pixel = contact.pixelColor(x, tip)
+                assert pixel.alpha() > 230 and pixel.green() < 70
+            assert contact.pixelColor(size // 2, round(size * .03)).green() > 190
+            bubble.frame, bubble.frame_dirty = lines, True
             bubble.motion = QPointF(0.8, -0.45)
             rippled = bubble.grabFramebuffer()
             assert rippled.pixelColor(size//2, size//2) == bent.pixelColor(size//2, size//2)
@@ -105,7 +138,6 @@ def run():
             center_x, center_y = after_jump.width() // 2, after_jump.height() // 2
             assert after_jump.pixelColor(center_x, center_y) == before_jump.pixelColor(center_x, center_y)
             assert after_jump.pixelColor(center_x, center_y).alpha() == 255
-            bubble.capture();app.processEvents();assert bubble.frame is not None
         worker = bubble.worker
         assert bubble.show_in_screenshots()
         assert not bubble.timer.isActive() and bubble.photo_timer.isActive()

@@ -14,6 +14,7 @@ $backup=Join-Path $browserRoot ('.anterior-'+$token)
 $hostHash=(Get-FileHash -LiteralPath $hostSource -Algorithm SHA256).Hash.ToLowerInvariant()
 $hostFile=Join-Path $InstallDir ('CiceronHost-'+$hostHash.Substring(0,16)+'.exe')
 $hostManifest=Join-Path $InstallDir 'ciceron-native-host.json'
+$legacyManifest=Join-Path (Join-Path $env:LOCALAPPDATA 'GanaLaBatalla') 'ciceron-native-host.json'
 $warnings=@()
 try {
     $files=@('manifest.json','background.js','bridge.js','content.js','popup.js','popup.html','popup.css','rules.json')
@@ -81,7 +82,7 @@ try {
         try {
             if(Test-Path -LiteralPath $key) {
                 $current=(Get-Item -LiteralPath $key).GetValue('')
-                if ($current -and $current -ne $hostManifest) { throw 'Ya existe otro puente con ese nombre.' }
+                if ($current -and $current -ne $hostManifest -and $current -ne $legacyManifest) { throw 'Ya existe otro puente con ese nombre.' }
             }
             $entry=New-Item -Path $key -Force
             $entry.SetValue('', $hostManifest, [Microsoft.Win32.RegistryValueKind]::String)

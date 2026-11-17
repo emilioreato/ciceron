@@ -37,7 +37,7 @@ class BridgeTests(unittest.TestCase):
    try:
     m.send_message(p.stdin,{'type':'hello','browser':'Brave'})
     first=m.read_message(p.stdout); self.assertEqual(first,{'type':'policy','policy':m.DEFAULT})
-    data=Path(folder)/'GanaLaBatalla'; data.mkdir(exist_ok=True)
+    data=Path(folder)/'Ciceron'; data.mkdir(exist_ok=True)
     (data/'navegador.json').write_text(json.dumps({'enabled':False,'x_selectors':['aside']}),encoding='utf-8')
     second=m.read_message(p.stdout); self.assertFalse(second['policy']['enabled']); self.assertEqual(second['policy']['x_selectors'],['aside'])
     p.stdin.close(); self.assertEqual(p.wait(timeout=8),0)

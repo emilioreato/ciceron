@@ -1,5 +1,5 @@
 """The native Cicerón window and its shared appearance."""
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QFrame, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
@@ -8,6 +8,9 @@ class PreferenceBox(QComboBox):
     def __init__(self):
         super().__init__()
         self.setObjectName('preference')
+
+    def wheelEvent(self, event):
+        event.ignore()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -79,11 +82,14 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     QPushButton:disabled, QComboBox:disabled {{ color: {muted}; background: transparent; }}
     QPushButton#primary {{ background: {primary}; color: {primary_ink}; border: 1px solid {primary}; }}
     QPushButton#primary:hover {{ background: {primary_hover}; }}
-    QPushButton#quiet, QPushButton#nav, QPushButton#more {{ background: transparent; border-color: transparent; }}
-    QPushButton#quiet:hover, QPushButton#nav:hover, QPushButton#more:hover {{ background: {highlight}; }}
-    QPushButton#quiet:focus, QPushButton#nav:focus, QPushButton#more:focus {{ border-color: {accent}; }}
-    QPushButton#nav {{ text-align: left; padding: 10px 13px; }}
-    QPushButton#nav:checked {{ color: {accent}; background: {pressed}; border-color: {rim}; }}
+    QPushButton#quiet, QPushButton#more {{ background: transparent; border-color: transparent; }}
+    QPushButton#quiet:hover, QPushButton#more:hover {{ background: {highlight}; }}
+    QPushButton#quiet:focus, QPushButton#more:focus {{ border-color: {accent}; }}
+    QFrame#centerTabs {{ background: {surface}; border: 1px solid {rim}; border-radius: 13px; }}
+    QFrame#centerTabs QPushButton#nav {{ padding: 4px 8px; border-radius: 9px; background: transparent; border: 1px solid transparent; }}
+    QFrame#centerTabs QPushButton#nav:hover {{ background: {highlight}; }}
+    QFrame#centerTabs QPushButton#nav:checked {{ color: {accent}; background: {pressed}; font-weight: 650; }}
+    QFrame#centerTabs QPushButton#nav:focus {{ border-color: {accent}; }}
     QPushButton#more {{ padding: 4px 10px; font-size: 18px; }}
     QPushButton#more::menu-indicator {{ width: 0; }}
     QPushButton#destructive {{ color: {danger}; }}
@@ -104,6 +110,12 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     QScrollBar:vertical {{ width: 9px; background: transparent; margin: 2px; }}
     QScrollBar::handle:vertical {{ min-height: 28px; border-radius: 3px; background: {stroke}; }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; margin: 3px 0; }}
+    QScrollArea#centerPage QScrollBar::handle:vertical {{ min-height: 24px; border-radius: 2px; }}
+    QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: {accent}; }}
+    QScrollArea#centerPage QScrollBar::handle:vertical:disabled,
+    QScrollArea#centerPage QScrollBar::add-page:vertical,
+    QScrollArea#centerPage QScrollBar::sub-page:vertical {{ background: transparent; }}
     QMenu {{ border: 1px solid {stroke}; border-radius: 12px; padding: 5px; }}
     QMenu::item {{ padding: 7px 20px; border-radius: 7px; }}
     QMenu::item:selected {{ color: {ink}; background: {pressed}; }}
@@ -167,6 +179,7 @@ class LiveMaterial:
             try:
                 from window_glass import GlassBackdrop
                 self.material = GlassBackdrop(self, self.set_live)
+                self.material.floating_panel = getattr(self, 'floating', False)
             except (ImportError, OSError):
                 return
         if self.material is not None:
@@ -202,22 +215,23 @@ class LiveMaterial:
 
 
 class GlassDialog(LiveMaterial, QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, attached=False):
         super().__init__(parent)
         self.init_material()
+        self.setProperty('dockEmbedded', attached)
         owner = parent.window() if parent else None
         self.glass = bool(getattr(owner, 'glass', False))
         self.dark = getattr(owner, 'dark', False)
         self.transparency = getattr(owner, 'transparency', 0.0)
-        if self.glass:
-            self.enable_material(True, self.dark)
 
 
-class CenterWindow(LiveMaterial, QWidget):
+class CenterWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.init_material()
         self.monochrome = False
+        self.dark = False
+        self.glass = True
+        self.transparency = 0.0
 
     def paintEvent(self, event):
         if self.property('dockEmbedded'):
@@ -243,7 +257,7 @@ class CenterWindow(LiveMaterial, QWidget):
 class LibraryBanner(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(134)
+        self.setFixedHeight(116)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.glass = True
         self.live = False
@@ -302,16 +316,62 @@ def panel(name, text, parent=None):
     return label
 
 
+class CenterPage(QScrollArea):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName('centerPage')
+        bar = self.verticalScrollBar()
+        bar.setSingleStep(22)
+        self.wheel_animation = QPropertyAnimation(bar, b'value', self)
+        self.wheel_animation.setDuration(160)
+        self.wheel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        bar.actionTriggered.connect(self.wheel_animation.stop)
+
+    def hideEvent(self, event):
+        self.wheel_animation.stop()
+        super().hideEvent(event)
+
+    def wheelEvent(self, event):
+        bar = self.verticalScrollBar()
+        animation = self.wheel_animation
+        pixels = event.pixelDelta().y()
+        angle = event.angleDelta().y()
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier or bar.maximum() == 0:
+            event.ignore()
+            return
+        if pixels or event.phase() != Qt.ScrollPhase.NoScrollPhase:
+            animation.stop()
+            if pixels:
+                bar.setValue(bar.value() - pixels)
+                event.accept()
+            else:
+                super().wheelEvent(event)
+            return
+        if not angle:
+            event.ignore()
+            return
+        current = bar.value()
+        target = animation.endValue() if animation.state() == QPropertyAnimation.State.Running else current
+        steps = QApplication.styleHints().wheelScrollLines()
+        destination = round(target - angle / 120 * bar.singleStep() * steps)
+        animation.stop()
+        animation.setStartValue(current)
+        animation.setEndValue(max(bar.minimum(), min(bar.maximum(), destination)))
+        animation.start()
+        event.accept()
+
+
 def scrolled_page(parent):
-    scroll = QScrollArea(parent)
+    scroll = CenterPage(parent)
     scroll.setWidgetResizable(True)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     scroll.viewport().setObjectName('pageViewport')
     scroll.viewport().setAutoFillBackground(False)
     contents = QWidget()
     contents.setObjectName('pageContent')
     layout = QVBoxLayout(contents)
-    layout.setContentsMargins(0, 0, 8, 3)
+    layout.setContentsMargins(0, 0, 7, 4)
     layout.setSpacing(8)
     layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     scroll.setWidget(contents)

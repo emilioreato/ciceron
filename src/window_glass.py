@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton
 )
 
-from gpu_lens import VERTEX
-from windows_glass import BackdropCapture, get_style
+from gpu_lens import EDGE_OPTICS, VERTEX
+from windows_glass import BackdropCapture, get_style, set_affinity
 
 
 FRAGMENT = '''#version 120
@@ -25,16 +25,14 @@ uniform float transparency;
 uniform float elapsed;
 uniform float floating_panel;
 varying vec2 uv;
+''' + EDGE_OPTICS + '''
 
 vec3 softened_desktop(vec2 position) {
-    vec2 delta = 7.0 / pixels;
-    return (
-        texture2D(backdrop, position).rgb * 2.0
-        + texture2D(backdrop, position + vec2(delta.x, 0.0)).rgb
-        + texture2D(backdrop, position - vec2(delta.x, 0.0)).rgb
-        + texture2D(backdrop, position + vec2(0.0, delta.y)).rgb
-        + texture2D(backdrop, position - vec2(0.0, delta.y)).rgb
-    ) / 6.0;
+    vec2 delta = 0.85 / pixels;
+    return 0.25 * (texture2D(backdrop, position + delta).rgb
+                 + texture2D(backdrop, position - delta).rgb
+                 + texture2D(backdrop, position + vec2(delta.x, -delta.y)).rgb
+                 + texture2D(backdrop, position + vec2(-delta.x, delta.y)).rgb);
 }
 
 vec3 legible_surface(vec3 desktop, float transmission) {
@@ -44,47 +42,41 @@ vec3 legible_surface(vec3 desktop, float transmission) {
 
 void main() {
     float transmission = 0.15 + transparency * 0.35;
-    if (material < 0.0) {
-        vec3 fill = legible_surface(softened_desktop(uv), transmission);
-        if (floating_panel > 0.5) {
-            vec2 p = abs((uv - 0.5) * pixels) - pixels * 0.5 + 19.0;
-            float edge = length(max(p, 0.0)) + min(max(p.x, p.y), 0.0) - 18.0;
-            float alpha = (1.0 - smoothstep(-1.0, 0.0, edge)) * 0.79;
-            fill = mix(fill, vec3(0.94), (1.0 - smoothstep(0.0, 2.0, -edge)) * 0.59);
-            gl_FragColor = vec4(fill * alpha, alpha);
-        } else {
-            gl_FragColor = vec4(fill, 1.0);
-        }
-        return;
-    }
-
     vec2 pos = uv * pixels;
-    vec2 half_size = surface.zw * 0.5;
-    vec2 local = pos - surface.xy - half_size;
+    bool window_face = material < 0.0;
+    vec4 rect = window_face ? vec4(0.0, 0.0, pixels) : surface;
+    vec2 half_size = rect.zw * 0.5;
+    vec2 local = pos - rect.xy - half_size;
     float radius = min(19.0, min(half_size.x, half_size.y));
     vec2 q = abs(local) - half_size + radius;
     float distance = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-    if (distance > 0.0) discard;
-    vec2 normal = normalize(max(q, 0.0) * sign(local) + local * 0.002 + vec2(0.0001));
-    float shoulder = 1.0 - smoothstep(1.0, min(21.0, radius + 3.0), -distance);
+    if (distance > 0.0) {
+        if (!window_face || floating_panel > 0.5) discard;
+        gl_FragColor = vec4(legible_surface(softened_desktop(uv), transmission), 1.0);
+        return;
+    }
+    vec2 corner = max(q, 0.0);
+    vec2 normal = length(corner) > 0.0 ? corner / length(corner) * sign(local)
+                : (q.x > q.y ? vec2(sign(local.x), 0.0) : vec2(0.0, sign(local.y)));
+    float width = radius * 0.70;
+    float shoulder = 1.0 - smoothstep(0.0, width, -distance);
     float near_pointer = exp(-length(pos - cursor) / 115.0);
     float wave = sin(distance * 0.47 - elapsed * 8.0) * near_pointer * 0.95;
     float direction = 0.55 - normal.y * 0.36 - normal.x * 0.13;
-    vec2 refracted = uv + normal * (shoulder * (9.0 + wave) / pixels);
+    vec2 refracted = uv - normal * (lip_inset(-distance, width) + shoulder * wave) / pixels;
     vec2 spread = normal * (shoulder * (0.36 + direction * 0.5) / pixels);
     vec3 desktop = texture2D(backdrop, refracted).rgb;
     float chroma = max(desktop.r, max(desktop.g, desktop.b)) - min(desktop.r, min(desktop.g, desktop.b));
     desktop.rb = mix(desktop.rb, vec2(texture2D(backdrop, refracted + spread).r,
                                      texture2D(backdrop, refracted - spread).b),
                      0.42 * smoothstep(0.06, 0.30, chroma));
-    float rim = 1.0 - smoothstep(0.0, 5.0, -distance);
     float reflection = (1.0 - smoothstep(0.0, 1.8, -distance)) * (0.22 + direction * 0.30);
-    vec3 body = legible_surface(softened_desktop(refracted), transmission - 0.05);
+    vec3 body = legible_surface(softened_desktop(refracted), transmission - (window_face ? 0.0 : 0.05));
     if (material > 0.80) {
         body = mix(body, tint * vec3(0.74, 0.88, 1.0) + vec3(0.0, 0.015, 0.07), 0.33);
     }
-    vec3 glass = mix(body, desktop, rim * 0.48);
-    float alpha = mix(1.0, 0.88, floating_panel);
+    vec3 glass = mix(body, desktop, shoulder * 0.72);
+    float alpha = mix(1.0, window_face ? 0.79 * (1.0 - smoothstep(-1.0, 0.0, distance)) : 0.88, floating_panel);
     gl_FragColor = vec4(mix(glass, vec3(1.0), reflection) * alpha, alpha);
 }
 '''
@@ -116,6 +108,10 @@ class GlassBackdrop(QOpenGLWidget):
         self.started = time.monotonic()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
+        self.capture_hwnd = None
+        self.photo_timer = QTimer(self)
+        self.photo_timer.setSingleShot(True)
+        self.photo_timer.timeout.connect(self.resume_capture)
         self.hide()
 
     def initializeGL(self):
@@ -137,14 +133,17 @@ class GlassBackdrop(QOpenGLWidget):
             self.error = str(error)
 
     def start(self):
-        if self.timer.isActive() or not self.window().isVisible():
+        if self.timer.isActive() or self.photo_timer.isActive() or not self.window().isVisible():
             return
         hwnd = int(self.window().winId())
         if not get_style(hwnd, -20) & 0x00080000:
             return
-        frame = self.capture_source.capture_adjacent(hwnd)
+        if not set_affinity(hwnd, 0x11):
+            return
+        self.capture_hwnd = hwnd
+        frame = self.capture_source.capture_behind(hwnd)
         if frame.isNull():
-            self.capture_source.close()
+            self.stop()
             return
         self.setGeometry(self.window().rect())
         self.lower()
@@ -159,13 +158,29 @@ class GlassBackdrop(QOpenGLWidget):
         self.update()
 
     def stop(self):
-        active = self.timer.isActive()
+        active = self.timer.isActive() or self.frame is not None
         self.timer.stop()
+        self.photo_timer.stop()
+        if self.capture_hwnd is not None:
+            set_affinity(self.capture_hwnd, 0)
+            self.capture_hwnd = None
         self.hide()
         self.frame = None
         self.capture_source.close()
         if active:
             self.on_ready(False)
+
+    def show_in_screenshots(self):
+        if self.capture_hwnd is not None and set_affinity(self.capture_hwnd, 0):
+            self.timer.stop()
+            self.photo_timer.start(20000)
+
+    def resume_capture(self):
+        if self.capture_hwnd is None or not set_affinity(self.capture_hwnd, 0x11):
+            self.stop()
+            return
+        self.timer.start(40)
+        self.refresh()
 
     def refresh(self):
         owner = self.window()
@@ -176,7 +191,7 @@ class GlassBackdrop(QOpenGLWidget):
         interval = 40 if owner.isActiveWindow() else 120
         if self.timer.interval() != interval:
             self.timer.setInterval(interval)
-        frame = self.capture_source.capture_adjacent(int(owner.winId()))
+        frame = self.capture_source.capture_behind(self.capture_hwnd)
         if not frame.isNull():
             self.frame = frame
             self.texture_dirty = True

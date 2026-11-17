@@ -1,15 +1,15 @@
 param([string]$Installer,[string]$RunKey)
 $script:lecturas = 0
-function Get-ItemProperty {
+function Get-Item {
     [CmdletBinding()]
-    param([string]$LiteralPath,[string]$Name)
-    if ($Name -eq 'GanaLaBatalla') {
+    param([string]$LiteralPath,[string]$Path,[switch]$Force)
+    if ($LiteralPath -eq $RunKey) {
         $script:lecturas++
-        if ($script:lecturas -eq 2) {
-            New-ItemProperty -LiteralPath $LiteralPath -Name $Name -Value 'C:\Otro\concurrente.exe' -PropertyType String -Force | Out-Null
+        if ($script:lecturas -eq 3) {
+            New-ItemProperty -LiteralPath $RunKey -Name Ciceron -Value 'C:\Otro\concurrente.exe' -PropertyType String -Force | Out-Null
         }
     }
-    Microsoft.PowerShell.Management\Get-ItemProperty @PSBoundParameters
+    Microsoft.PowerShell.Management\Get-Item @PSBoundParameters
 }
 & $Installer -RunKey $RunKey -NoLaunch
 if (!$?) { exit 1 }

@@ -94,7 +94,7 @@ El manifiesto controla la rueda sobre el icono de Cicerón. Tu ejecutable contro
 - **Reimportar.** El mismo ID, versión y contenido deja una sola entrada. Cambiar el contenido con el mismo número produce un error. Una versión inferior a la instalada también produce un error.
 - **Actualizar.** Vuelve a importar un paquete con el mismo ID y una versión superior. El dock y la biblioteca pasan a apuntar a la versión nueva y se conserva la carpeta de datos. Cierra la versión anterior antes de actualizar si la tienes abierta.
 - **Desinstalar.** En el menú de la tarjeta, elige **Desinstalar paquete**. Cicerón retira la entrada y el icono y limpia el código gestionado. Si hay archivos en uso, volverá a intentar retirarlos al arrancar. Conserva los datos de la app para una futura reinstalación. Usa **Abrir datos** antes de desinstalar si quieres localizarlos.
-- **Rutas.** Código y registro de paquetes en `%LOCALAPPDATA%\GanaLaBatalla\paquetes`. Datos en `%APPDATA%\GanaLaBatalla\datos-apps\<id>`. Cicerón continúa admitiendo archivos y accesos vinculados por separado.
+- **Rutas.** Código y registro de paquetes en `%LOCALAPPDATA%\Ciceron\paquetes`. Datos en `%APPDATA%\Ciceron\datos-apps\<id>`. Cicerón continúa admitiendo archivos y accesos vinculados por separado.
 - **Retirar el centro.** `Desinstalar.bat` retira Cicerón y conserva su almacén de paquetes para que puedas recuperarlo al reinstalar el centro.
 
 ## Ejemplo reproducible

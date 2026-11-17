@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'GanaLaBatalla'
+DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Ciceron'
 POLICY = DATA / 'navegador.json'
 SESSIONS = DATA / 'navegadores-activos'
 LIMIT = 1024 * 1024

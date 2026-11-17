@@ -8,7 +8,7 @@ from center_ui import GlassDialog
 
 class VisualDialog(GlassDialog):
     def __init__(self, parent=None, attached=False, dock_provider=None):
-        super().__init__(parent)
+        super().__init__(parent, attached=attached)
         self.dock_provider = dock_provider
         self.setWindowTitle('Efectos de escritorio')
         self.floating = self.glass and not attached
@@ -16,8 +16,6 @@ class VisualDialog(GlassDialog):
             self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint |
                                 Qt.WindowType.WindowStaysOnTopHint)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-            if self.material is not None:
-                self.material.floating_panel = True
             self.set_live(False)
         self.resize(254 if attached else 300, 128 if attached else 162)
         box = QVBoxLayout(self)

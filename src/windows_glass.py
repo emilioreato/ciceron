@@ -80,14 +80,12 @@ class BackdropCapture:
         self.size = (width, height)
         return True
 
-    def capture_adjacent(self, hwnd):
-        # Sample just outside the client area. The glass remains transparent
-        # to the real pixels underneath, and the sample never sees itself.
+    def capture_behind(self, hwnd):
+        # The caller excludes its window from capture while the material is live.
         geometry = client_bounds(hwnd)
         if geometry is None:
             return QImage()
-        x, y, width, height = geometry
-        return self.capture_region((x - width - 2, y, width, height))
+        return self.capture_region(geometry)
 
     def capture_region(self, bounds):
         _, _, width, height = bounds

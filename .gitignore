@@ -8,6 +8,7 @@ navegador/extension/_metadata/
 /00 EXTENSION/
 /archivo/
 /internos/*.exe
+/internos/Ciceron/
 /tests/.*-temporal/
 .env
 .env.*

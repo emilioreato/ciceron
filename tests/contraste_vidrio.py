@@ -65,5 +65,21 @@ for dark in (False, True):
                 minimum = min(minimum, ratio)
                 assert ratio >= 4.5, (dark, clarity, x, y, ratio)
         assert sample(130, 45) != sample(230, 45), 'Se perdió la transmisión del fondo.'
+
+# Cross the straight upper edge of the window and of a card beneath it.
+layer.dark = False
+layer.transparency = 0
+for top in (0, card.y()):
+    readings = []
+    for penetration in (0, 3, 15):
+        source.fill(QColor('white'))
+        painter = QPainter(source)
+        painter.fillRect(0, top - 20, source.width(), 20 + penetration, QColor('black'))
+        painter.end()
+        layer.texture_dirty = True
+        result = layer.grabFramebuffer()
+        readings.append(sample(60, top + 2).green())
+    assert abs(readings[1] - readings[0]) < 5, (top, readings)
+    assert readings[0] - readings[2] > 60, (top, readings)
 window.close()
 print(f'Vidrio: contraste mínimo {minimum:.2f}:1 en claro y oscuro contra blanco y negro.')

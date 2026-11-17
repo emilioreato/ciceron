@@ -29,7 +29,7 @@ class BrowserDialog(GlassDialog):
     preferred_size_changed = Signal()
 
     def __init__(self,parent=None,attached=False):
-        super().__init__(parent)
+        super().__init__(parent, attached=attached)
         self.setWindowTitle('Navegador · Cicerón')
         self.broken = False
         self.next_enabled = True

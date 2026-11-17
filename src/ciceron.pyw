@@ -12,12 +12,12 @@ from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBo
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
     QAbstractSpinBox, QCalendarWidget, QSizePolicy, QStackedWidget, QToolButton)
-from PySide6.QtCore import QFileInfo, QSize
+from PySide6.QtCore import QSize
 from package_ui import edit_settings, install_packages
 from start_menu import StartMenuApps, pending_launches, request_launch
 from windows_glass import restore_above_taskbar
 
-DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'GanaLaBatalla'
+DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Ciceron'
 CONFIG = DATA / 'config.json'; APPS = DATA / 'apps.json'
 PACKAGE_TAGS = DATA / 'etiquetas-paquetes.json'
 LAUNCH_REQUESTS = DATA / 'arranques-paquetes'
@@ -26,6 +26,7 @@ DEFAULT = dict(title='Mi objetivo', target='', show_timer=True, guardian=True,
                theme='system', glass=True, clarity='balanced', open_center_on_start=False,
                ui_version='v2', dock_motion=True)
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
+RUN_VALUE = 'Ciceron'
 
 def read(path, default):
     try:
@@ -48,6 +49,31 @@ def icon():
     p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor('#343946')); p.drawRoundedRect(2,2,60,60,16,16)
     p.setPen(QColor('white')); p.drawText(pix.rect(),Qt.AlignmentFlag.AlignCenter,'C'); p.end()
     return QIcon(pix)
+
+def activation_event_signaled(kernel, handle):
+    result = kernel.WaitForSingleObject(handle, 0)
+    if result == 0:  # WAIT_OBJECT_0; an auto-reset event is consumed.
+        return True
+    if result == 0x102:  # WAIT_TIMEOUT
+        return False
+    if result == 0xFFFFFFFF:  # WAIT_FAILED
+        raise ctypes.WinError(kernel.GetLastError())
+    raise OSError(f'WaitForSingleObject devolvió un estado inesperado: {result:#x}')
+
+def watch_activation_event(app, kernel, handle, callback):
+    timer = QTimer(app)
+    timer.setInterval(100)
+    def poll():
+        try:
+            signaled = activation_event_signaled(kernel, handle)
+        except (OSError, RuntimeError):
+            timer.stop()
+            return
+        if signaled:
+            callback()
+    timer.timeout.connect(poll)
+    timer.start()
+    return timer
 
 def caption(text,kind=None):
     return panel(kind or '', text)
@@ -193,6 +219,11 @@ class App:
         self.dock = None
         self.dock_signature = None
         self.classic = None
+        from edge_dock import AppWheelFilter
+        self.wheel_filter = AppWheelFilter(self)
+        QApplication.instance().installNativeEventFilter(self.wheel_filter)
+        self.library_snapshot = None
+        self.classic_snapshot = None
         self.build_window()
         self.apply_appearance()
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_appearance)
@@ -200,7 +231,7 @@ class App:
         self.count.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.count.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,bool(self.cfg['topmost']))
         self.count.setFixedSize(160,24); self.count.setWindowOpacity(0.9)
-        self.count.setStyleSheet('QPushButton { background: #1c1c1c; color: white; border: 0; border-radius: 0; padding: 0; font: 10pt "Segoe UI"; }')
+        self.update_timer_style()
         self.count.setToolTip('Clic para configurar · arrastra para mover en la barra')
         self.count.moved.connect(self._remember_count_position)
         self._count_fits=False
@@ -210,7 +241,7 @@ class App:
         self._set_count_screen(QApplication.primaryScreen())
         self.count.clicked.connect(self.edit_goal)
         self.tray=QSystemTrayIcon(icon()); menu=QMenu(self.window)
-        menu.addAction('Abrir Cicerón',self.show)
+        menu.addAction('Abrir Cicerón',self.open_center)
         menu.addAction('General', lambda: self.open_page('general'))
         menu.addAction('Ajustes', lambda: self.open_page('settings'))
         menu.addAction('Estado', lambda: self.open_page('status'))
@@ -227,7 +258,7 @@ class App:
         if self.cfg['open_center_on_start']:
             self.open_center()
         elif not CONFIG.exists() or not QSystemTrayIcon.isSystemTrayAvailable():
-            self.show()
+            self.open_center()
         elif self.cfg['ui_version'] == 'v2':
             self.show_edge_dock()
     def save(self):
@@ -286,18 +317,25 @@ class App:
         self.cfg['count_x_ratio']=max(0.0,min(1.0,(x-screen.x())/available))
         if not self.save(): self.cfg['count_x_ratio']=previous
     def tray_clicked(self,reason):
-        if reason in (QSystemTrayIcon.ActivationReason.Trigger,QSystemTrayIcon.ActivationReason.DoubleClick): self.show()
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger,QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.open_center()
     def build_window(self):
         self.window = CenterWindow()
-        self.window.material_changed = self.update_window_style
         self.window.setWindowTitle('Cicerón')
-        self.window.resize(418, 390)
+        self.window.resize(418, 400)
         self.window.setMinimumSize(340, 315)
         outer = QVBoxLayout(self.window)
-        outer.setContentsMargins(8, 5, 7, 7)
-        outer.setSpacing(8)
-        menu = QHBoxLayout()
-        menu.setSpacing(4)
+        outer.setContentsMargins(11, 10, 6, 8)
+        outer.setSpacing(10)
+        tab_header = QHBoxLayout()
+        tab_header.setContentsMargins(0, 0, 12, 0)
+        selector = QFrame()
+        selector.setObjectName('centerTabs')
+        selector.setAccessibleName('Secciones de Cicerón')
+        menu = QHBoxLayout(selector)
+        menu.setContentsMargins(4, 4, 4, 4)
+        menu.setSpacing(3)
+        tab_header.addWidget(selector)
         self.nav = QButtonGroup(self.window)
         self.pages = QStackedWidget()
         self.page_ids = {}
@@ -314,12 +352,10 @@ class App:
             item.setObjectName('nav')
             item.setCheckable(True)
             self.nav.addButton(item, index)
-            menu.addWidget(item)
-        menu.addStretch(1)
-        outer.addLayout(menu)
+            menu.addWidget(item, 1)
+        outer.addLayout(tab_header)
         outer.addWidget(self.pages, 1)
         self.nav.button(self.page_ids['general']).setChecked(True)
-        self.window.setProperty('localWheel', True)
 
     def apply_appearance(self, *_):
         classic = self.cfg['ui_version'] == 'v1'
@@ -328,7 +364,6 @@ class App:
         self.window.glass = bool(self.cfg['glass']) and not classic
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
-        self.window.enable_material(self.window.glass, self.window.dark)
         if self.dock is not None:
             self.dock.set_glass(self.window.glass)
             self.dock.motion_enabled = bool(self.cfg['dock_motion'])
@@ -336,10 +371,21 @@ class App:
             self.dock.layer.update()
             self.dock.update()
         self.update_window_style()
+        if hasattr(self, 'count'):
+            self.update_timer_style()
+
+    def update_timer_style(self):
+        self.count.setStyleSheet('''QPushButton {
+            background: #1c1c1c; color: white; border: 0;
+            border-radius: 0; padding: 0; font: 10pt "Segoe UI";
+        }''')
 
     def update_window_style(self):
         self.banner.glass = not self.window.monochrome
-        QApplication.instance().setStyleSheet(stylesheet(self.window.dark, self.window.glass, self.window.monochrome))
+        app = QApplication.instance()
+        appearance = stylesheet(self.window.dark, self.window.glass, self.window.monochrome)
+        if app.styleSheet() != appearance:
+            app.setStyleSheet(appearance)
         self.window.update()
         self.banner.update()
         if self.pages.currentIndex() == self.page_ids['status']:
@@ -349,8 +395,8 @@ class App:
         from edge_dock import tool_icon
         self.banner = LibraryBanner()
         layout = QVBoxLayout(self.banner)
-        layout.setContentsMargins(16, 10, 16, 11)
-        layout.setSpacing(3)
+        layout.setContentsMargins(14, 9, 14, 10)
+        layout.setSpacing(2)
         layout.addWidget(caption('Mis aplicaciones', 'heroTitle'))
         self.library_summary = caption('', 'heroDetail')
         layout.addWidget(self.library_summary)
@@ -381,9 +427,6 @@ class App:
             self.builtin_cards.append((detail.parentWidget(), fold_search(' '.join((title, description, *tags)))))
             if key == 'clock':
                 self.goal_detail = detail
-        content.addWidget(button('Aplicaciones instaladas de Windows',
-                                 lambda: self.open_location('ms-settings:appsfeatures')),
-                          alignment=Qt.AlignmentFlag.AlignLeft)
 
     def build_library(self, content):
         self.app_search = QLineEdit()
@@ -441,6 +484,7 @@ class App:
         clarity.currentIndexChanged.connect(
             lambda index: self.change_preference('clarity', clarity.itemData(index), clarity))
         self.card(content, 'Transparencia', '', control=clarity)
+        content.addSpacing(4)
         content.addWidget(caption('Inicio', 'heading'))
         startup = ClearCheckBox()
         startup.setFixedSize(22, 22)
@@ -507,24 +551,33 @@ class App:
             else:
                 control.setChecked(bool(previous))
             control.blockSignals(blocked)
+            return
+        if key == 'ui_version' and value != previous:
+            # Let the activated control finish handling the click before its
+            # window is detached from the dock or hidden.
+            QTimer.singleShot(0, self.window, self.switch_ui)
+            return
         self.apply_appearance()
-        if key == 'ui_version' and self.cfg[key] != previous:
-            self.window.hide()
-            self.show()
+
+    def switch_ui(self):
+        if self.dock is not None and self.dock.panel is not None:
+            self.dock.panel.close()
+        self.window.hide()
+        self.apply_appearance()
+        self.open_center()
 
     def select_page(self, key):
         index = self.page_ids[key]
         self.nav.button(index).setChecked(True)
         self.pages.setCurrentIndex(index)
-        self.window.setProperty('localWheel', key == 'general')
         if key == 'general':
             self.render_library()
         elif key == 'status':
             self.refresh_status()
 
     def open_page(self, key):
+        self.wheel_filter.remember_foreground()
         self.select_page(key)
-        self.render()
         if self.dock is not None and self.dock.isVisible() and self.dock.screen:
             if self.dock.panel is None or self.dock.panel.key != 'settings':
                 self.dock.toggle_panel('settings', lambda: self.window, persistent=True)
@@ -563,9 +616,9 @@ class App:
         self.dock.raise_()
 
     def toggle_settings_panel(self):
+        self.wheel_filter.remember_foreground()
         def settings():
             self.select_page('general')
-            self.render()
             return self.window
         self.dock.toggle_panel('settings', settings, persistent=True)
 
@@ -590,14 +643,21 @@ class App:
         self.dock.set_entries(entries)
         self.dock_signature = signature
 
-    def open_tool(self, key):
+    def open_tool(self, key, *, from_start=False):
+        self.wheel_filter.remember_foreground()
         if self.dock is not None and self.dock.isVisible():
+            if from_start and self.dock.panel is not None and self.dock.panel.key == key:
+                self.dock.panel.raise_()
+                self.dock.panel.activateWindow()
+                return
             factories = {
                 'clock': lambda: self.goal_dialog(attached=True),
                 'browser': lambda: BrowserDialog(self.window, attached=True),
                 'effects': lambda: VisualDialog(self.window, attached=True, dock_provider=lambda: self.dock),
             }
             self.dock.toggle_panel(key, factories[key])
+            if from_start:
+                self.dock.panel.activateWindow()
         else:
             {'clock': self.edit_goal, 'browser': self.browser_settings, 'effects': self.visual_playground}[key]()
 
@@ -639,6 +699,10 @@ class App:
         self.classic.activateWindow()
 
     def render_classic(self):
+        snapshot = (self.cfg['target'], self.apps, self.managed_apps)
+        if snapshot == self.classic_snapshot:
+            return
+        self.classic_snapshot = snapshot
         while self.classic_rows.count():
             widget = self.classic_rows.takeAt(0).widget()
             widget.hide()
@@ -681,6 +745,11 @@ class App:
             self.refresh_status()
 
     def render_library(self, *_):
+        snapshot = (self.app_search.text(), self.apps, self.managed_apps,
+                    self.package_tags, self.bad_apps, self.package_error)
+        if snapshot == self.library_snapshot:
+            return
+        self.library_snapshot = snapshot
         while self.library_rows.count():
             widget = self.library_rows.takeAt(0).widget()
             widget.hide()
@@ -706,8 +775,12 @@ class App:
                 matches.append((item, tags))
         if not matches and (not query or not builtin_matches):
             message = 'No hay aplicaciones que coincidan con la búsqueda.' if query else (
-                'Importa un paquete .ciceron, un ejecutable o un acceso directo.')
-            self.library_rows.addWidget(caption(message, 'muted'))
+                'Importa un .ciceron, un EXE o un acceso directo.')
+            hint = caption(message, 'muted')
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint.setContentsMargins(6, 3, 6, 3)
+            hint.setWordWrap(bool(query))
+            self.library_rows.addWidget(hint)
         for item, tags in matches:
             path = Path(item['path'])
             exists = path.is_file()
@@ -809,8 +882,9 @@ class App:
             bundled = QIcon(item['icon'])
             if not bundled.isNull():
                 return bundled
-        path = Path(item['path'])
-        return self.file_icons.icon(QFileInfo(str(path))) if path.is_file() else icon()
+        # QFileIconProvider's per-path lookup can load a shell extension on
+        # the GUI thread. A generic icon keeps linked files cheap to display.
+        return self.file_icons.icon(QFileIconProvider.IconType.File)
 
     @staticmethod
     def app_description(item):
@@ -838,7 +912,7 @@ class App:
 
     @staticmethod
     def install_dir():
-        return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GanaLaBatalla'
+        return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Ciceron'
 
     def open_install_folder(self):
         folder = self.install_dir()
@@ -857,11 +931,13 @@ class App:
             detail.show()
         fields['program'].setText(state)
         fields['program'].setToolTip(str(install))
-        shortcut = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Microsoft/Windows/Start Menu/Programs/Mi centro.lnk'
-        fields['shortcut'].setText('Acceso encontrado' if shortcut.is_file() else 'Acceso no encontrado')
+        shortcuts = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Microsoft/Windows/Start Menu/Programs'
+        shortcut = shortcuts / 'Cicerón.lnk'
+        legacy_shortcut = shortcuts / 'Mi centro.lnk'
+        fields['shortcut'].setText('Acceso encontrado' if shortcut.is_file() or legacy_shortcut.is_file() else 'Acceso no encontrado')
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as registry:
-                raw, _ = winreg.QueryValueEx(registry, 'GanaLaBatalla')
+                raw, _ = winreg.QueryValueEx(registry, RUN_VALUE)
             startup = 'Activado' if isinstance(raw, str) and Path(
                 os.path.expandvars(raw.strip().strip('"'))) == install and installed else 'La entrada apunta a otra ruta'
         except FileNotFoundError:
@@ -879,7 +955,6 @@ class App:
         else:
             glass_state = 'Disponible en el dock V2' if self.window.glass else 'Desactivado en Ajustes'
         fields['glass'].setText(glass_state)
-        fields['glass'].setToolTip(getattr(self.window.material, 'error', None) or '')
         connected = sessions()
         if connected:
             state = 'Con error de conexión' if any(item.get('error') for item in connected) else 'En comunicación'
@@ -895,7 +970,12 @@ class App:
         app = QApplication.instance()
         bubble = getattr(app, '_ciceron_overlay', None)
         dock = self.dock if self.dock is not None and self.dock.isVisible() else None
-        if (bubble is None or not bubble.isVisible()) and dock is None:
+        def live_materials():
+            return [widget.material for widget in app.topLevelWidgets()
+                    if widget.isVisible() and getattr(widget, 'live', False)
+                    and getattr(widget, 'material', None) is not None]
+
+        if (bubble is None or not bubble.isVisible()) and dock is None and not live_materials():
             return
         self.tray.showMessage('Captura con Cicerón',
                               'Tienes tres segundos para abrir el panel o colocar la burbuja.',
@@ -906,6 +986,8 @@ class App:
                 bubble.show_in_screenshots()
             if self.dock is dock and dock is not None:
                 dock.show_in_screenshots()
+            for material in live_materials():
+                material.show_in_screenshots()
 
         QTimer.singleShot(3500, freeze)
     def visual_playground(self):
@@ -927,8 +1009,11 @@ class App:
                 os.startfile(item['path'])
         except (OSError, ValueError) as e: QMessageBox.warning(self.window,'No se pudo abrir',str(e))
 
-    def launch_requested_packages(self):
-        for app_id in pending_launches(LAUNCH_REQUESTS):
+    def launch_requested_apps(self):
+        for kind, app_id in pending_launches(LAUNCH_REQUESTS):
+            if kind == 'tool':
+                self.open_tool(app_id, from_start=True)
+                continue
             item = next((item for item in self.managed_apps if item['package']['id'] == app_id), None)
             if item is not None:
                 self.launch(item)
@@ -1032,7 +1117,7 @@ class App:
         self.goal_dialog().exec()
 
     def goal_dialog(self, attached=False):
-        d=GlassDialog(self.window); d.setWindowTitle('Timer'); d.resize(350,276)
+        d=GlassDialog(self.window, attached=attached); d.setWindowTitle('Timer'); d.resize(350,276)
         box=QVBoxLayout(d); box.setContentsMargins(12,9,12,11); box.setSpacing(8)
         head=QHBoxLayout(); head.addWidget(caption('Timer','title')); head.addStretch()
         more=button('Opciones',self.options); more.setObjectName('quiet'); head.addWidget(more); box.addLayout(head)
@@ -1052,48 +1137,59 @@ class App:
         date_row.setContentsMargins(2, 0, 3, 0)
         date_row.setSpacing(0)
         date_row.addWidget(date, 1)
-        picker = QDialog(d, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        picker.setWindowTitle('Elegir fecha')
-        picker.setStyleSheet(stylesheet(False, False, neutral=True) +
-                             '''
-            QCalendarWidget QWidget { font-size: 12px; }
-            QCalendarWidget QWidget#qt_calendar_navigationbar { background: #f1f1f1; }
-            QCalendarWidget QToolButton { background: transparent; color: #202020; border: 0; padding: 3px; }
-            QCalendarWidget QToolButton:hover { background: #e4e4e4; }
-            QCalendarWidget QAbstractItemView {
-                background: white; color: #202020; alternate-background-color: #f3f3f3;
-                selection-background-color: #333; selection-color: white;
-            }
-        ''')
-        picker_layout = QVBoxLayout(picker)
-        picker_layout.setContentsMargins(7, 6, 7, 6)
-        picker_layout.setSpacing(4)
-        calendar = QCalendarWidget(picker)
-        calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        palette = calendar.palette()
-        for role, color in (('Base', '#ffffff'), ('AlternateBase', '#f3f3f3'), ('Window', '#ffffff'),
-                            ('WindowText', '#202020'), ('Text', '#202020'), ('Button', '#f1f1f1'),
-                            ('ButtonText', '#202020'), ('Highlight', '#333333'), ('HighlightedText', '#ffffff')):
-            palette.setColor(getattr(QPalette.ColorRole, role), QColor(color))
-        calendar.setPalette(palette)
-        weekend = QTextCharFormat()
-        weekend.setForeground(QColor('#545454'))
-        for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
-            calendar.setWeekdayTextFormat(day, weekend)
-        for control_name, arrow in (('qt_calendar_prevmonth', '‹'), ('qt_calendar_nextmonth', '›')):
-            control = calendar.findChild(QToolButton, control_name)
-            if control is not None:
-                control.setIcon(QIcon())
-                control.setText(arrow)
-                control.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        picker_layout.addWidget(calendar)
-        picker_layout.addWidget(button('Cerrar', picker.reject), alignment=Qt.AlignmentFlag.AlignRight)
+        calendar_popup = None
 
-        def selected(value):
-            date.setDate(value)
-            picker.accept()
+        def build_calendar():
+            picker = QDialog(d, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+            picker.setWindowTitle('Elegir fecha')
+            picker.setStyleSheet(stylesheet(False, False, neutral=True) +
+                                 '''
+                QCalendarWidget QWidget { font-size: 12px; }
+                QCalendarWidget QWidget#qt_calendar_navigationbar { background: #f1f1f1; }
+                QCalendarWidget QToolButton { background: transparent; color: #202020; border: 0; padding: 3px; }
+                QCalendarWidget QToolButton:hover { background: #e4e4e4; }
+                QCalendarWidget QAbstractItemView {
+                    background: white; color: #202020; alternate-background-color: #f3f3f3;
+                    selection-background-color: #333; selection-color: white;
+                }
+            ''')
+            picker_layout = QVBoxLayout(picker)
+            picker_layout.setContentsMargins(7, 6, 7, 6)
+            picker_layout.setSpacing(4)
+            calendar = QCalendarWidget(picker)
+            calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+            palette = calendar.palette()
+            for role, color in (('Base', '#ffffff'), ('AlternateBase', '#f3f3f3'), ('Window', '#ffffff'),
+                                ('WindowText', '#202020'), ('Text', '#202020'), ('Button', '#f1f1f1'),
+                                ('ButtonText', '#202020'), ('Highlight', '#333333'), ('HighlightedText', '#ffffff')):
+                palette.setColor(getattr(QPalette.ColorRole, role), QColor(color))
+            calendar.setPalette(palette)
+            weekend = QTextCharFormat()
+            weekend.setForeground(QColor('#545454'))
+            for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+                calendar.setWeekdayTextFormat(day, weekend)
+            for control_name, arrow in (('qt_calendar_prevmonth', '‹'), ('qt_calendar_nextmonth', '›')):
+                control = calendar.findChild(QToolButton, control_name)
+                if control is not None:
+                    control.setIcon(QIcon())
+                    control.setText(arrow)
+                    control.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            picker_layout.addWidget(calendar)
+            picker_layout.addWidget(button('Cerrar', picker.reject), alignment=Qt.AlignmentFlag.AlignRight)
+
+            def selected(value):
+                date.setDate(value)
+                picker.accept()
+
+            calendar.clicked.connect(selected)
+            calendar.activated.connect(selected)
+            return picker, calendar
 
         def choose_date():
+            nonlocal calendar_popup
+            if calendar_popup is None:
+                calendar_popup = build_calendar()
+            picker, calendar = calendar_popup
             if picker.isVisible():
                 picker.reject()
                 return
@@ -1108,8 +1204,6 @@ class App:
             picker.move(point)
             picker.show()
 
-        calendar.clicked.connect(selected)
-        calendar.activated.connect(selected)
         calendar_button = button('Calendario', choose_date)
         calendar_button.setObjectName('calendarButton')
         calendar_button.setAutoDefault(False)
@@ -1169,12 +1263,12 @@ class App:
         old_startup=None; old_startup_type=None; startup_exists=False
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY) as k:
-                old_startup,old_startup_type=winreg.QueryValueEx(k,'GanaLaBatalla'); startup_exists=True
+                old_startup,old_startup_type=winreg.QueryValueEx(k,RUN_VALUE); startup_exists=True
         except FileNotFoundError: pass
         except OSError as e:
             QMessageBox.warning(self.window,'Inicio automático',f'No se pudo consultar el Registro: {e}'); return
-        install_dir=Path(os.environ.get('LOCALAPPDATA','')) / 'GanaLaBatalla'
-        owned_paths={os.path.normcase(str(install_dir / name)) for name in ('Ciceron.exe','GanaLaBatalla.exe')}
+        install_dir=Path(os.environ.get('LOCALAPPDATA','')) / 'Ciceron'
+        owned_paths={os.path.normcase(str(install_dir / 'Ciceron.exe'))}
         own_entry=isinstance(old_startup,str) and os.path.normcase(os.path.expandvars(old_startup.strip().strip('"'))) in owned_paths
         installed_executable=os.path.normcase(os.path.abspath(sys.executable)) in owned_paths
         can_manage=bool(getattr(sys,'frozen',False)) and installed_executable and (not startup_exists or own_entry)
@@ -1191,13 +1285,13 @@ class App:
             if changed_startup:
                 try:
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY,0,winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
-                        try: current=winreg.QueryValueEx(k,'GanaLaBatalla')
+                        try: current=winreg.QueryValueEx(k,RUN_VALUE)
                         except FileNotFoundError: current=None
                         expected=(old_startup,old_startup_type) if startup_exists else None
                         if current != expected:
                             raise OSError('La entrada de inicio cambió mientras estaba abierta la ventana. Vuelve a abrir los ajustes.')
-                        if startup.isChecked(): winreg.SetValueEx(k,'GanaLaBatalla',0,winreg.REG_SZ,'"'+sys.executable+'"')
-                        else: winreg.DeleteValue(k,'GanaLaBatalla')
+                        if startup.isChecked(): winreg.SetValueEx(k,RUN_VALUE,0,winreg.REG_SZ,'"'+sys.executable+'"')
+                        else: winreg.DeleteValue(k,RUN_VALUE)
                 except OSError as e: QMessageBox.warning(self.window,'Inicio automático',str(e)); return
             old=self.cfg.copy(); self.cfg.update(words=words.text(),topmost=top.isChecked())
             if not self.save():
@@ -1205,13 +1299,13 @@ class App:
                 if changed_startup:
                     try:
                         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY,0,winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
-                            try: current=winreg.QueryValueEx(k,'GanaLaBatalla')
+                            try: current=winreg.QueryValueEx(k,RUN_VALUE)
                             except FileNotFoundError: current=None
                             expected=('"'+sys.executable+'"',winreg.REG_SZ) if startup.isChecked() else None
                             if current != expected:
                                 raise OSError('La entrada volvió a cambiar; no se sobrescribió.')
-                            if startup_exists: winreg.SetValueEx(k,'GanaLaBatalla',0,old_startup_type,old_startup)
-                            elif current is not None: winreg.DeleteValue(k,'GanaLaBatalla')
+                            if startup_exists: winreg.SetValueEx(k,RUN_VALUE,0,old_startup_type,old_startup)
+                            elif current is not None: winreg.DeleteValue(k,RUN_VALUE)
                     except OSError as e: QMessageBox.warning(self.window,'Inicio automático',f'No se pudo restaurar la entrada anterior: {e}')
                 return
             visible=self.count.isVisible(); self.count.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,top.isChecked())
@@ -1245,7 +1339,7 @@ class App:
         found=next((w for w in words if w.casefold() in title),None); days=(t-now).total_seconds()/86400
         cooldown=1800 if days>30 else 900 if days>7 else 300 if days>1 else 120
         if found and self.alert is None and mono-self.last_alert>=cooldown:
-            self.last_alert=mono; self.alert=QMessageBox(self.window); self.alert.setWindowTitle('Gana la batalla'); self.alert.setText('Gana la batalla'); self.alert.setInformativeText(f'Has abierto una ventana que coincide con «{found}». ¿Quieres volver a tu objetivo?')
+            self.last_alert=mono; self.alert=QMessageBox(self.window); self.alert.setWindowTitle('Cicerón · enfoque'); self.alert.setText('Vuelve a tu objetivo'); self.alert.setInformativeText(f'Has abierto una ventana que coincide con «{found}». ¿Quieres volver a tu objetivo?')
             self.alert.setStandardButtons(QMessageBox.StandardButton.Ok)
             stop=self.alert.addButton('Detener avisos',QMessageBox.ButtonRole.ActionRole)
             stop.clicked.connect(self.stop_alerts)
@@ -1267,9 +1361,9 @@ def main():
             result = {'native_capture': False, 'error': str(error)}
         Path(sys.argv[2]).write_text(json.dumps(result), encoding='utf-8')
         return 0 if result['native_capture'] else 1
-    if len(sys.argv) == 3 and sys.argv[1] == '--lanzar-paquete':
+    if len(sys.argv) == 3 and sys.argv[1] in ('--lanzar-paquete', '--abrir-herramienta'):
         try:
-            request_launch(LAUNCH_REQUESTS, sys.argv[2])
+            request_launch(LAUNCH_REQUESTS, sys.argv[2], builtin=sys.argv[1] == '--abrir-herramienta')
         except (OSError, ValueError):
             return 1
     kernel = ctypes.windll.kernel32
@@ -1277,12 +1371,13 @@ def main():
     kernel.CreateEventW.restype = ctypes.c_void_p
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
     kernel.CreateMutexW.restype = ctypes.c_void_p
-    kernel.CloseHandle.argtypes = kernel.SetEvent.argtypes = [ctypes.c_void_p]
     kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel.CloseHandle.argtypes = kernel.SetEvent.argtypes = [ctypes.c_void_p]
     activate = kernel.CreateEventW(None, False, False, r'Local\Ciceron_AbrirCentro_v1')
     if not activate:
         raise ctypes.WinError()
-    mutex = kernel.CreateMutexW(None, False, r'Local\GanaLaBatalla_Unica_v1')
+    mutex = kernel.CreateMutexW(None, False, r'Local\Ciceron_Unica_v2')
     mutex_status = kernel.GetLastError()
     try:
         if not mutex:
@@ -1298,13 +1393,10 @@ def main():
         controller = App()
         app.aboutToQuit.connect(controller.stop_visual_effects)
 
-        def process_activation():
-            if kernel.WaitForSingleObject(activate, 0) == 0:
-                controller.open_center()
-
-        controller.timer.timeout.connect(process_activation)
-        controller.timer.timeout.connect(controller.launch_requested_packages)
-        QTimer.singleShot(0, controller.launch_requested_packages)
+        activation = watch_activation_event(app, kernel, activate, controller.open_center)
+        app.aboutToQuit.connect(activation.stop)
+        controller.timer.timeout.connect(controller.launch_requested_apps)
+        QTimer.singleShot(0, controller.launch_requested_apps)
         if '--abrir' in sys.argv:
             controller.open_center()
         if '--comprobacion' in sys.argv:

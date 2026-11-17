@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cicerón: navegador",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "Pausa Feed y herramientas de Cicerón para el navegador.",
   "permissions": [
     "storage",
@@ -32,7 +32,13 @@
   },
   "action": {
     "default_title": "Cicerón",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/ciceron-16.png",
+      "32": "icons/ciceron-32.png",
+      "48": "icons/ciceron-48.png",
+      "128": "icons/ciceron-128.png"
+    }
   },
   "content_scripts": [
     {
@@ -51,5 +57,11 @@
       "run_at": "document_start"
     }
   ],
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApIAtjtZSNeMKnsJ/biuvrbpXlfnR+DHvUycWzcoLON45yhU2GNcEA8RPjPAeLlNCC9/0Y0EPTu9596kNE7TePVY0VqAOh0OcgoANDf8iY/ZcwOTY4A6zenHZm7S8+5Z6xFy33TyhKwT9hpDRbVcpqW7v6JkMkdeo81ku94FMp6v7Y4ImGMBt9gB6j8V2Muq5Mjaac06zXXPXX+jYK2xuKwRVd6nXC5Zigxbzi9EeBEdJVRuHDeVXAqKAqj2GB+Cq3DHNbLctB46Y8JTtx3dHtBMQRA8pCq9/HhdCMkp1zMm6CBBNIgQSe39szIj0hpoKQiZHY6D4nIVY8cFz8U8ZEQIDAQAB"
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApIAtjtZSNeMKnsJ/biuvrbpXlfnR+DHvUycWzcoLON45yhU2GNcEA8RPjPAeLlNCC9/0Y0EPTu9596kNE7TePVY0VqAOh0OcgoANDf8iY/ZcwOTY4A6zenHZm7S8+5Z6xFy33TyhKwT9hpDRbVcpqW7v6JkMkdeo81ku94FMp6v7Y4ImGMBt9gB6j8V2Muq5Mjaac06zXXPXX+jYK2xuKwRVd6nXC5Zigxbzi9EeBEdJVRuHDeVXAqKAqj2GB+Cq3DHNbLctB46Y8JTtx3dHtBMQRA8pCq9/HhdCMkp1zMm6CBBNIgQSe39szIj0hpoKQiZHY6D4nIVY8cFz8U8ZEQIDAQAB",
+  "icons": {
+    "16": "icons/ciceron-16.png",
+    "32": "icons/ciceron-32.png",
+    "48": "icons/ciceron-48.png",
+    "128": "icons/ciceron-128.png"
+  }
 }

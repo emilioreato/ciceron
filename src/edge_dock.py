@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QScrollArea, QStackedWidget
 
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
-from windows_glass import (PanelMousePress, client_bounds, foreground_window, forward_wheel,
+from windows_glass import (client_bounds, foreground_window, forward_wheel,
                            is_external_window, on_ac_power, root_window, set_affinity, window_belongs_to)
 
 
@@ -229,7 +229,6 @@ class AttachedPanel(QWidget):
         self.setObjectName('dockPanel')
         self.dock = dock
         self.content = None
-        self.session = 0
         self.closing = False
         self.using_glass = False
         self.capture_enabled = False
@@ -261,7 +260,6 @@ class AttachedPanel(QWidget):
         self.open_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def load_content(self, key, content, persistent):
-        self.session += 1
         self.key, self.content, self.persistent = key, content, persistent
         self.closing = False
         preferred = content.size()
@@ -282,6 +280,7 @@ class AttachedPanel(QWidget):
         self.setWindowOpacity(start)
         self.show()
         self.raise_()
+        self.activateWindow()
         if start < 1:
             self.open_animation.setStartValue(start)
             self.open_animation.setEndValue(1.0)
@@ -357,11 +356,16 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QPushButton:hover, QWidget#dockPanel QPushButton:checked {{
                 background: #fff; border-color: #a0a0a0;
             }}
-            QWidget#dockPanel QPushButton#nav {{
-                padding: 5px 9px; text-align: center; background: transparent;
+            QWidget#dockPanel QFrame#centerTabs {{
+                background: rgba({line},24); border: 1px solid rgba({line},46); border-radius: 13px;
+            }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav {{
+                padding: 4px 8px; border-radius: 9px; background: transparent;
                 border-color: transparent; color: {'white' if self.dark else '#202020'};
             }}
-            QWidget#dockPanel QPushButton#nav:checked {{ background: white; color: #202020; }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:hover {{ background: rgba({line},26); }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:checked {{ background: white; color: #202020; }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:focus {{ border-color: #737373; }}
             QWidget#dockPanel QPushButton#advancedToggle {{ padding: 4px 9px; }}
             QWidget#dockPanel QPushButton#effectSwitch {{
                 text-align: left; padding-left: 11px; padding-right: 27px;
@@ -376,6 +380,9 @@ class AttachedPanel(QWidget):
             }}
             QWidget#dockPanel QScrollBar:vertical {{ width: 6px; }}
             QWidget#dockPanel QScrollBar::handle:vertical {{ background: rgba({line},88); }}
+            QWidget#dockPanel QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; }}
+            QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: rgba({line},160); }}
+            QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
         ''')
         self.update()
 
@@ -472,11 +479,12 @@ class AttachedPanel(QWidget):
         super().closeEvent(event)
 
 
-class DockWheelFilter(QAbstractNativeEventFilter):
-    def __init__(self, dock):
+class AppWheelFilter(QAbstractNativeEventFilter):
+    def __init__(self, controller):
         super().__init__()
-        self.dock = dock
+        self.controller = controller
         self.previous_app = None
+        self.remember_foreground()
 
     def remember_foreground(self):
         active = foreground_window()
@@ -487,29 +495,28 @@ class DockWheelFilter(QAbstractNativeEventFilter):
         if event_type != b'windows_generic_MSG':
             return False, 0
         msg = wintypes.MSG.from_address(int(message))
+        if msg.message == 0x0021:  # WM_MOUSEACTIVATE, before the click takes focus
+            self.remember_foreground()
+        elif msg.message == 0x0006 and msg.wParam & 0xffff:  # WM_ACTIVATE
+            previous = root_window(msg.lParam, 2) if msg.lParam else None
+            if is_external_window(previous):
+                self.previous_app = previous
         if msg.message not in (0x020A, 0x020E):
             return False, 0
-        handle = int(self.dock.winId())
-        panel = self.dock.panel
-        on_panel = panel is not None and self.dock.is_panel_window(panel, msg.hWnd)
-        if on_panel and panel.content is not None and panel.content.property('localWheel'):
-            return False, 0
-        on_dock = window_belongs_to(msg.hWnd, handle)
-        if on_dock:
-            icon = self.dock.childAt(self.dock.mapFromGlobal(QCursor.pos()))
+        dock = self.controller.dock
+        if dock is not None and dock.isVisible() and window_belongs_to(msg.hWnd, int(dock.winId())):
+            icon = dock.childAt(dock.mapFromGlobal(QCursor.pos()))
             if isinstance(icon, DockIcon) and icon.wheel == 'consume':
                 return True, 0
-        if on_dock or on_panel:
-            self.remember_foreground()
-            return forward_wheel(root_window(msg.hWnd, 2) or handle, msg, self.previous_app), 0
-        return False, 0
+        self.remember_foreground()
+        return forward_wheel(root_window(msg.hWnd, 2) or msg.hWnd, msg, self.previous_app), 0
 
 
 class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 4
-    CORNER_RADIUS = 12
+    CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
     HIDE_DELAY = 0.03
@@ -524,8 +531,6 @@ class EdgeDock(QWidget):
         self.layer = DockOptics(self)
         self.panel = None
         self.panel_window = None
-        self.panel_mouse_press = PanelMousePress()
-        self.wheel_filter = DockWheelFilter(self)
         self.backdrop = None
         self.last_frames = None
         self.layer.hide()
@@ -558,6 +563,10 @@ class EdgeDock(QWidget):
         self.photo_timer = QTimer(self)
         self.photo_timer.setSingleShot(True)
         self.photo_timer.timeout.connect(self.resume_capture)
+        self.glass_timer = QTimer(self)
+        self.glass_timer.setSingleShot(True)
+        self.glass_timer.timeout.connect(self.prepare_layer)
+        QApplication.instance().applicationStateChanged.connect(self.application_state_changed)
         self.screen = None
         QApplication.instance().primaryScreenChanged.connect(self.change_screen)
         self.change_screen(QApplication.primaryScreen())
@@ -606,7 +615,12 @@ class EdgeDock(QWidget):
         changed = self.glass_enabled != bool(enabled)
         self.glass_enabled = bool(enabled)
         if changed and self.isVisible():
-            self.prepare_layer()
+            if self.glass_enabled:
+                self.glass_timer.start(180)
+            else:
+                self.stop_capture()
+                if self.panel is not None:
+                    self.panel.capture_enabled = self.panel.prepare_layer(False)
 
     def prepare_layer(self):
         if not self.isVisible():
@@ -618,7 +632,7 @@ class EdgeDock(QWidget):
             if self.layer.isValid() and not self.layer.error and set_affinity(int(self.winId()), 0x11):
                 self.backdrop = DockBackdropCapture()
                 if self.animation.isActive():
-                    self.capture_timer.start(10)
+                    self.capture_timer.start(33)
                 self.capture()
         if self.backdrop is None or not full:
             self.stop_capture()
@@ -641,39 +655,16 @@ class EdgeDock(QWidget):
         self.apply_glass_tone(True)
         self.update()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        QApplication.instance().installNativeEventFilter(self.wheel_filter)
-        self.prepare_layer()
-        QTimer.singleShot(0, self, self.warm_panel)
-
     def panel_shell(self):
         if self.panel_window is None:
             self.panel_window = AttachedPanel(self)
             self.destroyed.connect(self.panel_window.deleteLater)
         return self.panel_window
 
-    def warm_panel(self):
-        if self.backdrop is None or self.panel is not None or self.panel_window is not None:
-            return
-        started = time.monotonic()
-        panel = self.panel_shell()
-        panel.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        panel.setWindowOpacity(0)
-        panel.layer.show()
-        panel.show()
-        panel.hide()
-        panel.setWindowOpacity(1)
-        panel.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
-        if self.leave_at > started:
-            elapsed = time.monotonic() - started
-            self.leave_at += elapsed
-            self.transition_start += elapsed
-
     def hideEvent(self, event):
+        self.glass_timer.stop()
         if self.panel is not None:
             self.panel.close()
-        QApplication.instance().removeNativeEventFilter(self.wheel_filter)
         self.stop_capture()
         self.reset_to_handle()
         super().hideEvent(event)
@@ -697,10 +688,12 @@ class EdgeDock(QWidget):
 
     def reveal(self):
         self.leave_at = time.monotonic() + self.HIDE_DELAY
+        if self.glass_enabled and self.backdrop is None and not self.glass_timer.isActive():
+            self.glass_timer.start(180)
         if not self.animation.isActive():
             self.animation.start(16)
         if self.backdrop is not None and not self.photo_timer.isActive() and not self.capture_timer.isActive():
-            self.capture_timer.start(10)
+            self.capture_timer.start(33)
             self.capture()
         self.update_dock()
 
@@ -861,24 +854,24 @@ class EdgeDock(QWidget):
         if self.backdrop is not None:
             self.last_frames = self.backdrop.latest
             if self.animation.isActive():
-                self.capture_timer.start(10)
+                self.capture_timer.start(33)
             self.capture()
 
     def nativeEvent(self, event_type, message):
         msg = wintypes.MSG.from_address(int(message))
-        if msg.message == PanelMousePress.MESSAGE:
-            panel = self.panel
-            if panel is not None and panel.session == msg.lParam:
-                target, session = msg.wParam, msg.lParam
-                QTimer.singleShot(0, self, lambda: self.dismiss_outside_click(panel, session, target))
-            return True, 0
         if msg.message == 0x0218 and msg.wParam in (0x000A, 0x0012):
             QTimer.singleShot(0, self.prepare_layer)
         return super().nativeEvent(event_type, message)
 
-    def dismiss_outside_click(self, panel, session, target):
-        if panel is not self.panel or session != panel.session:
+    def application_state_changed(self, state):
+        if state != Qt.ApplicationState.ApplicationActive and self.panel is not None:
+            QTimer.singleShot(0, self, self.dismiss_inactive_panel)
+
+    def dismiss_inactive_panel(self):
+        panel = self.panel
+        if panel is None or QApplication.applicationState() == Qt.ApplicationState.ApplicationActive:
             return
+        target = foreground_window()
         if window_belongs_to(target, int(self.winId())) or self.is_panel_window(panel, target):
             return
         # A confirmation owned by this panel may be running a nested event loop.
@@ -911,7 +904,6 @@ class EdgeDock(QWidget):
             super().keyPressEvent(event)
 
     def toggle_panel(self, key, factory, persistent=False):
-        self.wheel_filter.remember_foreground()
         previous = self.panel
         if previous is not None:
             previous.close()
@@ -936,7 +928,6 @@ class EdgeDock(QWidget):
         self.panel.layer.lower()
         self.panel.show_panel()
         self.panel.capture_enabled = self.panel.prepare_layer(live, self.photo_timer.isActive())
-        self.panel_mouse_press.start(int(self.winId()), self.panel.session)
         self.capture()
         self.reveal()
 
@@ -964,5 +955,4 @@ class EdgeDock(QWidget):
     def panel_closed(self, panel):
         if self.panel is panel:
             self.panel = None
-            self.panel_mouse_press.stop()
             self.leave_at = time.monotonic() + self.HIDE_DELAY

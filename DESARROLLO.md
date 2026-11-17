@@ -1,6 +1,6 @@
 # Desarrollo de Cicerón
 
-La aplicación actual está en `src/ciceron.pyw` y usa PySide6 / Qt. La configuración y la lista de aplicaciones se guardan en `%APPDATA%\GanaLaBatalla`; el código no las contiene.
+La aplicación actual está en `src/ciceron.pyw` y usa PySide6 / Qt. La configuración y la lista de aplicaciones se guardan en `%APPDATA%\Ciceron`; el código no las contiene. Al actualizar una instalación antigua, el instalador migra su configuración y paquetes a las rutas nuevas.
 
 ## Ejecutar desde el código
 
@@ -12,7 +12,7 @@ Para actualizar dependencias del entorno, ejecuta `scripts\preparar.bat`.
 
 ## Crear e instalar el ejecutable
 
-Ejecuta `scripts\Crear EXE.bat`: compila el código actual y copia el resultado a `internos\GanaLaBatalla.exe` y `internos\CiceronHost.exe`. Después cierra la versión instalada y ejecuta `Instalar.bat` desde la carpeta principal. La instalación es por usuario y conserva los datos. `Desinstalar.bat` elimina la aplicación instalada y conserva la configuración.
+Ejecuta `scripts\Crear EXE.bat`: compila el código actual y copia el resultado a `internos\Ciceron.exe` y `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. La instalación es por usuario y conserva los datos. `Desinstalar.bat` elimina la aplicación instalada y conserva la configuración.
 
 ## Estructura
 
@@ -36,7 +36,7 @@ Ejecuta `powershell -NoProfile -ExecutionPolicy Bypass -File tests\instalacion.p
 
 ## Inicio de Windows
 
-El instalador, la opción «Abrir al iniciar sesión» y el desinstalador comparten el valor `GanaLaBatalla` en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. La primera instalación lo crea apuntando al ejecutable instalado; una reinstalación reemplaza el ejecutable y conserva el inicio desactivado si el usuario lo había desactivado. No se sobrescriben ni eliminan valores que apunten a otro programa. La opción de la aplicación solo cambia el inicio desde el ejecutable instalado y rechaza cambios concurrentes. El desinstalador elimina únicamente la entrada propia y conserva la configuración.
+El instalador, la opción «Abrir al iniciar sesión» y el desinstalador comparten el valor `Ciceron` en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. La primera instalación lo crea apuntando al ejecutable instalado; una reinstalación reemplaza el ejecutable y conserva el inicio desactivado si el usuario lo había desactivado. No se sobrescriben ni eliminan valores que apunten a otro programa. Al actualizar, el instalador migra la entrada antigua propia. La opción de la aplicación solo cambia el inicio desde el ejecutable instalado y rechaza cambios concurrentes. El desinstalador elimina únicamente la entrada propia y conserva la configuración.
 
 Para comprobar la casilla de inicio sin tocar el Registro real, ejecuta `.venv\Scripts\python.exe tests\inicio.py`.
 
