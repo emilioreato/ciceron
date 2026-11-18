@@ -81,5 +81,17 @@ for top in (0, card.y()):
         readings.append(sample(60, top + 2).green())
     assert abs(readings[1] - readings[0]) < 5, (top, readings)
     assert readings[0] - readings[2] > 60, (top, readings)
+layer.pure = True
+for x in range(source.width()):
+    shade = QColor('white' if x % 8 < 4 else 'black')
+    for y in range(source.height()):
+        source.setPixelColor(x, y, shade)
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+def variation(y):
+    values = [sample(x, y).green() for x in range(130, 155)]
+    return max(values) - min(values)
+assert variation(45) > 180, 'V3 pierde la transparencia en el fondo.'
+assert variation(127) < variation(45) * .65, 'Falta el desenfoque dentro del botón V3.'
 window.close()
 print(f'Vidrio: contraste mínimo {minimum:.2f}:1 en claro y oscuro contra blanco y negro.')

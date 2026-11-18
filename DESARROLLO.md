@@ -50,3 +50,8 @@ Para verificar el inicio y parada del contador, la fecha a medianoche, la hora o
 `navegador/extension` contiene la extensión MV3 y las reglas originales. `src/browser_bridge.py` implementa mensajería nativa por stdio, sin transmitir URL ni contenido de páginas; el ejecutable independiente se empaqueta como `internos/CiceronHost.exe`. `src/browser_ui.py` y `src/browser_setup.py` proporcionan controles y registro por usuario. El identificador de extensión está fijado mediante la clave pública del manifiesto y debe coincidir con el origen permitido en el instalador; publicar una extensión firmada requerirá gestionar una clave de firma y una migración de ID.
 
 Pruebas: `node --test navegador\tests\*.test.cjs` y `.venv\Scripts\python.exe tests\browser_bridge.py`, `.venv\Scripts\python.exe tests\browser_ui.py` y `powershell -NoProfile -ExecutionPolicy Bypass -File tests\navegador_instalacion.ps1`. La carga manual de una extensión desempaquetada y su integración real deben verificarse en cada navegador y perfil.
+# Material de las ventanas
+
+Las tres versiones comparten las páginas, los diálogos, la navegación y las acciones. Para añadir un menú, construye sus controles Qt una sola vez. Usa `GlassDialog` para los diálogos de Cicerón y pasa `attached=True` cuando la barra los aloje. Los formularios declarados en paquetes usan el mismo diálogo y heredan la versión elegida. Una aplicación lanzada en otro proceso controla sus propias ventanas.
+
+`center_ui.py` define las versiones y su estilo. En V3, `draw_clear_material` usa la textura de fondo ya capturada y las posiciones visibles de botones y campos para dibujar el desenfoque directamente en la GPU. Conserva transparentes los contenedores intermedios y usa nombres de rol para las excepciones de estilo.

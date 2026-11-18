@@ -34,15 +34,16 @@ def dark_mode(theme):
 UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
 
 
-def clear_styles(scope=''):
+def clear_styles(scope='', light=False):
     # Keep the shared stylesheet's spacing, target sizes and semantic roles.
     scope = (scope + ' ') if scope else ''
     def rule(selectors, properties):
         return ', '.join(scope + selector for selector in selectors.split(', ')) + ' { ' + properties + ' }'
     controls = 'QPushButton, QToolButton, QComboBox, QLineEdit, QAbstractSpinBox, QPlainTextEdit'
+    label_color = '#252a32' if light else '#f0f2f6'
     return '\n'.join((
         rule('QWidget', 'color: #f8f9fc; font-family: "Segoe UI Variable Text", "Segoe UI";'),
-        rule('QLabel, QLabel#muted, QLabel#heroDetail', 'color: #f0f2f6; background: transparent;'),
+        rule('QLabel, QLabel#muted, QLabel#heroTitle, QLabel#heroDetail', f'color: {label_color}; background: transparent;'),
         rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#dateField, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
              'background: transparent; border-color: transparent;'),
         rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',
@@ -52,6 +53,8 @@ def clear_styles(scope=''):
         rule('QPushButton:checked, QPushButton:pressed, QFrame#centerTabs QPushButton#nav:checked',
              'background: rgba(48,60,78,185); color: white; border-color: transparent;'),
         rule('QPushButton:disabled', 'color: #b3b8c2; background: rgba(38,42,48,100);'),
+        rule('QFrame#dateField QDateEdit, QFrame#dateField QPushButton#calendarButton, QPushButton#destructive', 'background: rgba(23,29,39,128); color: #fafbff; border-color: transparent;'),
+        rule('QCalendarWidget, QCalendarWidget QWidget#qt_calendar_navigationbar, QCalendarWidget QAbstractItemView', 'background: rgba(23,29,39,135); color: white; alternate-background-color: transparent;'),
         rule('QMenu, QComboBox QAbstractItemView', 'background: #303640; color: #fafbff;'),
     ))
 
@@ -190,6 +193,28 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
             color: {ink};
         }}
         """
+    styles += '''
+            QFrame#dateField { background: white; border-radius: 9px; }
+            QFrame#dateField QDateEdit { background: transparent; color: #202020; border: 1px solid transparent; }
+            QFrame#dateField QPushButton#calendarButton { background: white; color: #383838; border: 1px solid transparent; padding: 4px 8px; }
+            QFrame#dateField QDateEdit:focus, QFrame#dateField QPushButton#calendarButton:focus,
+            QFrame#dateField QPushButton#calendarButton:hover { border-color: #929292; }
+        '''
+    styles += '''
+            QPushButton#destructive { background: #ffeded; color: #8f242c; border: 1px solid #e9aab0; }
+            QPushButton#destructive:hover, QPushButton#destructive:focus { border-color: #a94b53; }
+            QPushButton#destructive:disabled { background: #eaeaea; color: #555555; border-color: transparent; }
+        '''
+    styles += '''
+                QCalendarWidget QWidget { font-size: 12px; }
+                QCalendarWidget QWidget#qt_calendar_navigationbar { background: #f1f1f1; }
+                QCalendarWidget QToolButton { background: transparent; color: #202020; border: 0; padding: 3px; }
+                QCalendarWidget QToolButton:hover { background: #e4e4e4; }
+                QCalendarWidget QAbstractItemView {
+                    background: white; color: #202020; alternate-background-color: #f3f3f3;
+                    selection-background-color: #333; selection-color: white;
+                }
+            '''
     return styles
 
 
@@ -254,6 +279,7 @@ class GlassDialog(LiveMaterial, QDialog):
         self.glass = bool(getattr(owner, 'glass', False))
         pure = bool(QApplication.instance().property('pureGlass'))
         self.setProperty('pureGlass', pure)
+        self.glass = self.glass or pure
         if pure and not attached:
             self.setWindowOpacity(0.995)
         self.dark = pure or getattr(owner, 'dark', False)

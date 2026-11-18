@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
                                QMessageBox, QProgressDialog, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
-from center_ui import PreferenceBox
+from center_ui import GlassDialog, PreferenceBox
 
 
 def install_packages(parent, store, paths):
@@ -44,12 +44,14 @@ def edit_settings(parent, store, app):
     except (OSError, ValueError) as error:
         QMessageBox.warning(parent, 'Configuración de la aplicación', str(error))
         return
-    dialog = QDialog(parent)
+    dialog = GlassDialog(parent)
     dialog.setWindowTitle(f"Configurar {app['name']}")
     layout = QVBoxLayout(dialog)
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     content = QWidget()
+    scroll.viewport().setObjectName("pageViewport")
+    content.setObjectName("pageContent")
     form = QFormLayout(content)
     controls = []
     for field in spec['settings']:

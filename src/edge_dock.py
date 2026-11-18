@@ -5,7 +5,7 @@ import math
 import time
 
 from OpenGL import GL
-from PySide6.QtCore import (QAbstractNativeEventFilter, QEasingCurve, QPoint, QPointF, QPropertyAnimation,
+from PySide6.QtCore import (QAbstractNativeEventFilter, QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation,
                            QRect, QRectF, Qt, QTimer)
 from PySide6.QtGui import (
     QColor, QCursor, QIcon, QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
@@ -127,6 +127,21 @@ class DockHandle(QToolButton):
 
 
 class DockOptics(QOpenGLWidget):
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.Hide):
+            owner = self.parentWidget()
+            if obj is not self and isinstance(obj, QWidget) and owner.isAncestorOf(obj):
+                self.update()
+        return False
+
     def __init__(self, dock):
         super().__init__(dock)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -263,6 +278,7 @@ class AttachedPanel(QWidget):
         self.scroll.setWidget(self.stack)
         self.scroll.viewport().setAutoFillBackground(False)
         outer.addWidget(self.scroll)
+        self.scroll.verticalScrollBar().valueChanged.connect(self.layer.update)
         self.resize(320, 220)
         self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
         self.resize_animation = QPropertyAnimation(self, b'geometry', self)
@@ -399,7 +415,7 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: rgba({line},160); }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
-        ''' + (clear_styles('QWidget#dockPanel') if getattr(self.dock, 'pure', False) else ''))
+        ''' + (clear_styles('QWidget#dockPanel', light and self.using_glass) if getattr(self.dock, 'pure', False) else ''))
         self.update()
 
     def dialog_finished(self):
@@ -548,6 +564,7 @@ class EdgeDock(QWidget):
         self.panel = None
         self.panel_window = None
         self.pending_panel = None
+        self.pending_open_scheduled = False
         self.backdrop = None
         self.last_frames = None
         self.layer.hide()
@@ -563,6 +580,7 @@ class EdgeDock(QWidget):
         self.using_glass = False
         self.glass_enabled = True
         self.monochrome = False
+        self.pure = False
         self.motion_enabled = True
         self.transparency = 0.0
         self.progress = 0.0
@@ -691,6 +709,7 @@ class EdgeDock(QWidget):
         self.animation.stop()
         self.capture_timer.stop()
         self.pending_panel = None
+        self.pending_open_scheduled = False
         self.leave_at = self.transition_to = self.progress = 0.0
         self.layout_icons()
         self.layer.update()
@@ -746,9 +765,17 @@ class EdgeDock(QWidget):
             interval = 10 if self.progress != target or waiting_to_hide else 45
             if self.animation.interval() != interval:
                 self.animation.setInterval(interval)
-        if self.pending_panel is not None and self.progress >= 1.0:
-            request, self.pending_panel = self.pending_panel, None
-            QTimer.singleShot(0, self, lambda request=request: self.toggle_panel(*request))
+        if (self.pending_panel is not None and self.progress >= 1.0 and
+                not self.pending_open_scheduled):
+            self.pending_open_scheduled = True
+            QTimer.singleShot(0, self, self.open_pending_panel)
+
+    def open_pending_panel(self):
+        self.pending_open_scheduled = False
+        request, self.pending_panel = self.pending_panel, None
+        if request is None or not self.isVisible() or self.panel is not None:
+            return
+        self.toggle_panel(*request)
 
     def layout_icons(self):
         rows = self.entries[:self.capacity] + [self.gear]
@@ -818,6 +845,8 @@ class EdgeDock(QWidget):
                     owner.layer.set_frame(frame, captured)
                     if not owner.using_glass:
                         owner.using_glass = True
+                        if owner is panel and self.pure:
+                            panel.apply_glass_tone(panel.layer.light)
                         owner.update()
                     if owner is panel and panel.pending_geometry is not None:
                         panel.animate_to(panel.pending_geometry)

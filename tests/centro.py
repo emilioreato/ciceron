@@ -52,6 +52,7 @@ with TemporaryDirectory() as temporary:
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.open_center()
+    QTest.qWait(450)
     assert center.dock.panel.key == 'settings'
     assert set(center.page_ids) == {'general', 'settings', 'status'}
     assert center.import_button.parentWidget() is center.banner
@@ -108,8 +109,16 @@ with TemporaryDirectory() as temporary:
     center.count.clicked.emit()
     app.processEvents()
     assert center.dock.isVisible()
+    assert center.dock.panel is None and center.dock.pending_panel[0] == 'clock'
+    center.open_tool('clock', from_start=True)
+    assert center.dock.pending_panel[0] == 'clock'
+    QTest.qWait(450)
     assert center.dock.panel is not None and center.dock.panel.key == 'clock'
     assert center.dock.panel.content.property('dockEmbedded') is True
+    assert center.dock.panel.windowOpacity() == 1.0
+    assert center.dock.panel.open_animation.duration() == 155
+    assert center.dock.panel.open_animation.startValue() == .20
+    assert center.dock.panel.open_animation.endValue() == 1.0
     center.count.clicked.emit()
     app.processEvents()
     assert center.dock.panel is None
@@ -191,6 +200,16 @@ with TemporaryDirectory() as temporary:
     assert [entry.accessibleName() for entry in center.dock.entries] == [
         'Timer', 'Navegador', 'Efectos de escritorio', 'Editor']
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v2'
+    pages = center.pages
+    active_page = pages.currentWidget()
+    chooser.setCurrentIndex(chooser.findData('v3'))
+    app.processEvents()
+    assert center.dock.pure and center.window.glass and center.pages is pages
+    assert pages.currentWidget() is active_page and center.dock.panel.content is center.window
+    assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v3'
+    chooser.setCurrentIndex(chooser.findData('v2'))
+    app.processEvents()
+    assert not center.dock.pure
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
     center.dock.panel.close()
     dock = center.dock

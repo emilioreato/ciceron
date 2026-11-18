@@ -8,7 +8,7 @@ from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, Libr
 from visual_playground import VisualDialog
 from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, QTimer, QDate, QTime, Signal
-from PySide6.QtGui import QIcon, QPainter, QColor, QPalette, QPixmap, QPen, QTextCharFormat
+from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
@@ -359,7 +359,7 @@ class App:
         monochrome = self.cfg['ui_version'] == 'v1'
         self.window.monochrome = monochrome
         self.window.dark = False if monochrome else dark_mode(self.cfg['theme'])
-        self.window.glass = bool(self.cfg['glass']) and not monochrome
+        self.window.glass = self.cfg['ui_version'] == 'v3' or (bool(self.cfg['glass']) and not monochrome)
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
         pure = self.cfg['ui_version'] == 'v3' and self.window.glass
@@ -378,10 +378,10 @@ class App:
         if hasattr(self, 'glass_control'):
             blocked = self.glass_control.blockSignals(True)
             self.glass_control.setChecked(self.window.glass)
-            self.glass_control.setEnabled(not monochrome)
+            self.glass_control.setEnabled(self.cfg['ui_version'] == 'v2')
             self.glass_control.blockSignals(blocked)
-            self.clarity_control.setEnabled(self.window.glass)
-            self.theme_control.setEnabled(not monochrome)
+            self.clarity_control.setEnabled(self.window.glass and not pure)
+            self.theme_control.setEnabled(self.cfg['ui_version'] == 'v2')
         self.update_window_style()
         if hasattr(self, 'count'):
             self.update_timer_style()
@@ -469,12 +469,12 @@ class App:
         content.addWidget(caption('Apariencia', 'heading'))
         version = PreferenceBox()
         version.setAccessibleName('Versión de la interfaz')
-        version.addItem('V1 · Clara', 'v1')
-        version.addItem('V2 · Liquid Glass', 'v2')
+        for key, label in UI_VERSIONS.items():
+            version.addItem(label, key)
         version.setCurrentIndex(version.findData(self.cfg['ui_version']))
         version.currentIndexChanged.connect(
             lambda index: self.change_preference('ui_version', version.itemData(index), version))
-        self.card(content, 'Interfaz', 'Misma distribución; V1 sin Liquid Glass.', control=version)
+        self.card(content, 'Interfaz', '', control=version)
         theme = PreferenceBox()
         theme.setAccessibleName('Tema')
         self.theme_control = theme
@@ -595,6 +595,8 @@ class App:
         self.select_page(key)
         self.show_edge_dock()
         if self.dock.screen:
+            if self.dock.pending_panel is not None and self.dock.pending_panel[0] == 'settings':
+                return
             if self.dock.panel is None or self.dock.panel.key != 'settings':
                 self.dock.toggle_panel('settings', lambda: self.window, persistent=True)
             else:
@@ -678,10 +680,11 @@ class App:
         if factory is None:
             return
         self.show_edge_dock()
-        self.dock.reveal()
         if from_start and self.dock.panel is not None and self.dock.panel.key == key:
             self.dock.panel.raise_()
             self.dock.panel.activateWindow()
+            return
+        if from_start and self.dock.pending_panel is not None and self.dock.pending_panel[0] == key:
             return
         self.dock.toggle_panel(key, factory)
         if from_start and self.dock.panel is not None:
@@ -1095,13 +1098,6 @@ class App:
         date.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         date_field = QFrame()
         date_field.setObjectName('dateField')
-        date_field.setStyleSheet('' if QApplication.instance().property('pureGlass') else '''
-            QFrame#dateField { background: white; border-radius: 9px; }
-            QFrame#dateField QDateEdit { background: transparent; color: #202020; border: 1px solid transparent; }
-            QFrame#dateField QPushButton#calendarButton { background: white; color: #383838; border: 1px solid transparent; padding: 4px 8px; }
-            QFrame#dateField QDateEdit:focus, QFrame#dateField QPushButton#calendarButton:focus,
-            QFrame#dateField QPushButton#calendarButton:hover { border-color: #929292; }
-        ''')
         date_row = QHBoxLayout(date_field)
         date_row.setContentsMargins(2, 0, 3, 0)
         date_row.setSpacing(0)
@@ -1109,34 +1105,14 @@ class App:
         calendar_popup = None
 
         def build_calendar():
-            picker = QDialog(d, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+            picker = GlassDialog(d)
+            picker.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
             picker.setWindowTitle('Elegir fecha')
-            picker.setStyleSheet(stylesheet(False, False, neutral=True) +
-                                 '''
-                QCalendarWidget QWidget { font-size: 12px; }
-                QCalendarWidget QWidget#qt_calendar_navigationbar { background: #f1f1f1; }
-                QCalendarWidget QToolButton { background: transparent; color: #202020; border: 0; padding: 3px; }
-                QCalendarWidget QToolButton:hover { background: #e4e4e4; }
-                QCalendarWidget QAbstractItemView {
-                    background: white; color: #202020; alternate-background-color: #f3f3f3;
-                    selection-background-color: #333; selection-color: white;
-                }
-            ''')
             picker_layout = QVBoxLayout(picker)
             picker_layout.setContentsMargins(7, 6, 7, 6)
             picker_layout.setSpacing(4)
             calendar = QCalendarWidget(picker)
             calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-            palette = calendar.palette()
-            for role, color in (('Base', '#ffffff'), ('AlternateBase', '#f3f3f3'), ('Window', '#ffffff'),
-                                ('WindowText', '#202020'), ('Text', '#202020'), ('Button', '#f1f1f1'),
-                                ('ButtonText', '#202020'), ('Highlight', '#333333'), ('HighlightedText', '#ffffff')):
-                palette.setColor(getattr(QPalette.ColorRole, role), QColor(color))
-            calendar.setPalette(palette)
-            weekend = QTextCharFormat()
-            weekend.setForeground(QColor('#545454'))
-            for day in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
-                calendar.setWeekdayTextFormat(day, weekend)
             for control_name, arrow in (('qt_calendar_prevmonth', '‹'), ('qt_calendar_nextmonth', '›')):
                 control = calendar.findChild(QToolButton, control_name)
                 if control is not None:
@@ -1193,11 +1169,6 @@ class App:
         guard=ClearCheckBox('Avisos de distracción'); guard.setChecked(bool(self.cfg['guardian'])); box.addWidget(guard)
         box.addStretch()
         row=QHBoxLayout(); stop=button('Detener',lambda: d.done(2)); stop.setObjectName('destructive'); stop.setEnabled(bool(self.cfg['show_timer'] and t)); row.addWidget(stop)
-        stop.setStyleSheet('' if QApplication.instance().property('pureGlass') else '''
-            QPushButton#destructive { background: #ffeded; color: #8f242c; border: 1px solid #e9aab0; }
-            QPushButton#destructive:hover, QPushButton#destructive:focus { border-color: #a94b53; }
-            QPushButton#destructive:disabled { background: #eaeaea; color: #555555; border-color: transparent; }
-        ''')
         row.addStretch()
         if not attached:
             row.addWidget(button('Cancelar', d.reject))
