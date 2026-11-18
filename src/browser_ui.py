@@ -7,6 +7,7 @@ import sys
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
     QPlainTextEdit,QMessageBox,QInputDialog,QLineEdit,QCheckBox,QWidget)
+from app_paths import application_root
 import browser_bridge as bridge
 from center_ui import GlassDialog
 
@@ -19,11 +20,15 @@ def label(text, kind=None):
     return w
 
 def extension_dir():
-    if getattr(sys,'frozen',False):
-        pointer=Path(sys.executable).parent/'extension-path.txt'
-        try: return Path(pointer.read_text(encoding='utf-8').strip())
-        except OSError: return Path(sys.executable).parent/'navegador'/'extension'
-    return Path(__file__).resolve().parents[1]/'00 EXTENSION'
+    root=application_root()
+    pointer=root/'extension-path.txt'
+    try:
+        configured=Path(pointer.read_text(encoding='utf-8').strip())
+        return (configured if configured.is_absolute() else root/configured).resolve()
+    except OSError:
+        installed=root/'00 EXTENSION'
+        if installed.is_dir(): return installed
+        return Path(__file__).resolve().parents[1]/'navegador'/'extension'
 
 class BrowserDialog(GlassDialog):
     preferred_size_changed = Signal()

@@ -1,6 +1,6 @@
 # Desarrollo de Cicerón
 
-La aplicación actual está en `src/ciceron.pyw` y usa PySide6 / Qt. La configuración y la lista de aplicaciones se guardan en `%APPDATA%\Ciceron`; el código no las contiene. Al actualizar una instalación antigua, el instalador migra su configuración y paquetes a las rutas nuevas.
+La aplicación actual está en `src/ciceron.pyw` y usa PySide6 / Qt. En una instalación, el programa, la extensión, la configuración y los datos viven juntos en `Aplicacion\`; los datos modificables están en `Aplicacion\datos\`. La app resuelve las rutas desde la carpeta de su propio ejecutable, de modo que puedes mover el directorio completo. Ejecuta `Instalar.bat` después de moverlo para renovar las rutas absolutas que Windows necesita en el Registro, los accesos y el puente nativo del navegador. El instalador migra los datos de instalaciones anteriores y conserva los datos locales al actualizar o desinstalar.
 
 ## Ejecutar desde el código
 
@@ -12,21 +12,22 @@ Para actualizar dependencias del entorno, ejecuta `scripts\preparar.bat`.
 
 ## Crear e instalar el ejecutable
 
-Ejecuta `scripts\Crear EXE.bat`: compila el programa en `internos\Ciceron\Ciceron.exe` con sus dependencias en `internos\Ciceron\_internal`, y genera el puente auxiliar `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. La instalación es por usuario y conserva los datos. `Desinstalar.bat` elimina la aplicación instalada y conserva la configuración.
+Ejecuta `scripts\Crear EXE.bat`: compila el programa en `internos\Ciceron\Ciceron.exe` con sus dependencias en `internos\Ciceron\_internal`, y genera el puente auxiliar `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. Instala en `Aplicacion\` y conserva allí los datos. `Desinstalar.bat` retira los componentes administrados y conserva `Aplicacion\datos\` y la extensión cargada.
 
 ## Estructura
 
 - `src/`: aplicación Qt. `ciceron.pyw` es el punto de entrada. `edge_dock.py` y `center_ui.py` componen la interfaz. `gpu_lens.py`, `lens_capture.py`, `window_glass.py` y `windows_glass.py` implementan los efectos y la integración con Windows. `app_packages.py` y `package_ui.py` administran las aplicaciones empaquetadas.
 - `scripts/`: preparación del entorno, ejecución y compilación.
 - `internos/`: ejecutable distribuible y scripts del instalador.
-- `navegador/extension/`: fuente de la extensión. El instalador copia la fuente a `00 EXTENSION/`, que se carga en el navegador. Chromium genera `_metadata/` al cargar la extensión.
+- `navegador/extension/`: fuente de la extensión. El instalador copia la fuente a `Aplicacion\00 EXTENSION\`, que se carga en el navegador. Chromium genera `_metadata/` al cargar la extensión. El archivo `Aplicacion\extension-path.txt` guarda una ruta relativa al directorio de la extensión.
+- `Aplicacion\datos\`: preferencias, lista de aplicaciones, paquetes importados y datos persistentes de las apps. Se mantiene dentro de la instalación y no se borra al desinstalar.
 - `tests/` y `navegador/tests/`: pruebas de escritorio, instalador y extensión.
 - `paquetes/ejemplo/`: ejemplo del formato de aplicaciones de Cicerón.
 - `docs/`: documentación técnica vigente.
 - `archivo/`: material histórico local excluido de la publicación.
 - `.venv/`, `.compilacion/`, `.salida/`: archivos locales de desarrollo generados al ejecutar los scripts; no se versionan.
 
-El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino. Los avisos dependen del título de la ventana activa, por lo que pueden producir falsos positivos o no detectar una página.
+Las rutas internas siempre se forman respecto de `Aplicacion\`; no las construyas desde el directorio actual ni fijes la unidad o la ruta del usuario. Las excepciones son integraciones administradas por Windows, como el menú Inicio, Run y el registro de Native Messaging, que requieren rutas absolutas. `Instalar.bat` las recrea para la ubicación actual. El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino. Los avisos dependen del título de la ventana activa, por lo que pueden producir falsos positivos o no detectar una página.
 
 ## Pruebas
 

@@ -31,6 +31,31 @@ def dark_mode(theme):
     )
 
 
+UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
+
+
+def clear_styles(scope=''):
+    # Keep the shared stylesheet's spacing, target sizes and semantic roles.
+    scope = (scope + ' ') if scope else ''
+    def rule(selectors, properties):
+        return ', '.join(scope + selector for selector in selectors.split(', ')) + ' { ' + properties + ' }'
+    controls = 'QPushButton, QToolButton, QComboBox, QLineEdit, QAbstractSpinBox, QPlainTextEdit'
+    return '\n'.join((
+        rule('QWidget', 'color: #f8f9fc; font-family: "Segoe UI Variable Text", "Segoe UI";'),
+        rule('QLabel, QLabel#muted, QLabel#heroDetail', 'color: #f0f2f6; background: transparent;'),
+        rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#dateField, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
+             'background: transparent; border-color: transparent;'),
+        rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',
+             'background: rgba(23,29,39,128); border: 1px solid transparent; border-radius: 11px; color: #fafbff;'),
+        rule('QPushButton:hover, QPushButton:focus, QPushButton#quiet:hover, QPushButton#primary:hover, QFrame#centerTabs QPushButton#nav:focus',
+             'background: rgba(47,56,70,165); border-color: transparent;'),
+        rule('QPushButton:checked, QPushButton:pressed, QFrame#centerTabs QPushButton#nav:checked',
+             'background: rgba(48,60,78,185); color: white; border-color: transparent;'),
+        rule('QPushButton:disabled', 'color: #b3b8c2; background: rgba(38,42,48,100);'),
+        rule('QMenu, QComboBox QAbstractItemView', 'background: #303640; color: #fafbff;'),
+    ))
+
+
 def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     if neutral and dark:
         ink, muted, base, field, stroke, accent = '#f7f7f7', '#ededed', '#252525', '#353535', '#a7a7a7', '#ffffff'
@@ -134,6 +159,11 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         QFrame#appCard QPushButton:hover, QFrame#appCard QPushButton#more:hover,
         QFrame#appCard QPushButton:focus, QFrame#appCard QPushButton#more:focus { background: rgba(233,240,255,75); }
         """
+    else:
+        styles += """
+        QLabel#heroTitle { color: #242424; }
+        QLabel#heroDetail { color: #555555; }
+        """
     if glass:
         control_outline = 'rgba(211, 224, 255, 110)' if dark else 'rgba(40, 61, 102, 100)'
         styles += f"""
@@ -183,6 +213,7 @@ class LiveMaterial:
             except (ImportError, OSError):
                 return
         if self.material is not None:
+            self.material.pure = bool(self.property('pureGlass'))
             self.material.dark = dark
             self.material.transparency = self.transparency
             if enabled and self.isVisible():
@@ -196,7 +227,7 @@ class LiveMaterial:
         if self.material_changed:
             self.material_changed()
         else:
-            self.setStyleSheet(stylesheet(self.dark, self.glass))
+            self.setStyleSheet(stylesheet(self.dark, self.glass) + (clear_styles() if self.property('pureGlass') else ''))
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -221,7 +252,11 @@ class GlassDialog(LiveMaterial, QDialog):
         self.setProperty('dockEmbedded', attached)
         owner = parent.window() if parent else None
         self.glass = bool(getattr(owner, 'glass', False))
-        self.dark = getattr(owner, 'dark', False)
+        pure = bool(QApplication.instance().property('pureGlass'))
+        self.setProperty('pureGlass', pure)
+        if pure and not attached:
+            self.setWindowOpacity(0.995)
+        self.dark = pure or getattr(owner, 'dark', False)
         self.transparency = getattr(owner, 'transparency', 0.0)
 
 
@@ -277,11 +312,11 @@ class LibraryBanner(QFrame):
         backdrop.setColorAt(0, QColor('#163458'))
         backdrop.setColorAt(.58, QColor('#23365e'))
         backdrop.setColorAt(1, QColor('#545794'))
-        painter.fillRect(bounds, backdrop if self.glass else QColor('#25395f'))
+        painter.fillRect(bounds, backdrop if self.glass else QColor('#ededed'))
         if self.glass:
             self.draw_glass(painter, width, height)
         painter.setClipping(False)
-        painter.setPen(QPen(QColor(221, 233, 255, 130), 1))
+        painter.setPen(QPen(QColor(221, 233, 255, 130) if self.glass else QColor('#c8c8c8'), 1))
         painter.drawPath(outline)
 
     @staticmethod

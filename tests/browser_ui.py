@@ -1,7 +1,7 @@
 import hashlib,os,sys,tempfile
 from pathlib import Path
 os.environ['QT_QPA_PLATFORM']='offscreen'
-tmp=tempfile.TemporaryDirectory(); os.environ['APPDATA']=tmp.name
+tmp=tempfile.TemporaryDirectory(); os.environ['APPDATA']=tmp.name; os.environ['CICERON_HOME']=str(Path(tmp.name)/'Aplicacion')
 sys.path.insert(0,str(Path('src').resolve()))
 from PySide6.QtWidgets import QApplication,QMessageBox,QInputDialog
 import browser_bridge as bridge

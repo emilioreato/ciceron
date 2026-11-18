@@ -16,6 +16,7 @@ root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'src'))
 with TemporaryDirectory() as temporary:
     os.environ['APPDATA'] = os.environ['LOCALAPPDATA'] = temporary
+    os.environ['CICERON_HOME'] = str(Path(temporary) / 'Aplicacion')
     loader = importlib.machinery.SourceFileLoader('ciceron_centro', str(root / 'src' / 'ciceron.pyw'))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
@@ -45,6 +46,11 @@ with TemporaryDirectory() as temporary:
     kernel.CloseHandle(event)
     assert center.dock.isVisible() and center.dock.handle.isVisible()
     assert center.dock.panel is None and center.dock.progress == 0.0
+    tray_actions = [action.text() for action in center.tray.contextMenu().actions()
+                    if not action.isSeparator()]
+    assert tray_actions == ['Ocultar barra lateral', 'Salir']
+    center.update_tray_actions()
+    assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.open_center()
     assert center.dock.panel.key == 'settings'
     assert set(center.page_ids) == {'general', 'settings', 'status'}
@@ -97,6 +103,16 @@ with TemporaryDirectory() as temporary:
         center.launch_requested_apps()
         assert center.dock.panel is opened
     center.open_center()
+    center.dock.hide()
+    assert not center.dock.isVisible()
+    center.count.clicked.emit()
+    app.processEvents()
+    assert center.dock.isVisible()
+    assert center.dock.panel is not None and center.dock.panel.key == 'clock'
+    assert center.dock.panel.content.property('dockEmbedded') is True
+    center.count.clicked.emit()
+    app.processEvents()
+    assert center.dock.panel is None
 
     paths = [Path(temporary) / name for name in ('Editor.cmd', 'Notas.cmd', 'Nuevo.cmd')]
     for path in paths:
@@ -132,7 +148,13 @@ with TemporaryDirectory() as temporary:
     with patch.object(module.QMessageBox, 'question', return_value=module.QMessageBox.StandardButton.Yes):
         center.remove(center.apps[1])
     assert len(center.apps) == 1 and paths[2].is_file()
-    assert module.read(module.APPS, [])[0] == center.apps
+    stored_apps = module.read(module.APPS, [])[0]
+    reloaded_apps = [dict(item, path=str(module.resolve_app_path(item['path']))) for item in stored_apps]
+    assert len(reloaded_apps) == len(center.apps)
+    for saved, runtime in zip(reloaded_apps, center.apps):
+        assert {key: value for key, value in saved.items() if key != 'path'} == {
+            key: value for key, value in runtime.items() if key != 'path'}
+        assert Path(saved['path']) == Path(runtime['path'])
 
     center.open_page('settings')
     chooser = next(widget for widget in center.window.findChildren(module.QComboBox)
@@ -140,19 +162,31 @@ with TemporaryDirectory() as temporary:
     chooser.setCurrentIndex(chooser.findData('v1'))
     app.processEvents()
     app.processEvents()
-    assert center.classic.isVisible() and not center.window.isVisible()
+    assert center.dock.isVisible() and center.window.isVisible()
+    assert center.dock.panel.key == 'settings' and center.dock.panel.content is center.window
+    assert center.window.property('dockEmbedded') is True
+    assert center.window.monochrome and not center.window.glass and not center.window.dark
+    assert not center.glass_control.isEnabled() and not center.glass_control.isChecked()
+    assert not center.theme_control.isEnabled()
+    assert 'QLabel#heroTitle { color: #242424; }' in center.dock.panel.styleSheet()
+    assert 'QFrame#clockCard { background: qlineargradient' not in center.dock.panel.styleSheet()
+    assert center.dock.geometry().right() == center.dock.screen.availableGeometry().right()
+    assert center.dock.panel.geometry().x() < center.dock.geometry().x()
+    assert center.dock.panel.geometry().right() <= center.dock.geometry().right()
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
-    center.classic.hide()
     center.open_center()
-    assert center.classic.isVisible()
-    center.classic.close()
+    assert center.dock.panel.key == 'settings' and center.window.isVisible()
+    assert center.pages.currentIndex() == center.page_ids['general']
     center.open_center()
-    assert center.classic.isVisible()
+    assert center.dock.panel.key == 'settings'
     center.open_page('settings')
     chooser.setCurrentIndex(chooser.findData('v2'))
     app.processEvents()
     app.processEvents()
-    assert center.dock.isVisible() and not center.classic.isVisible()
+    assert center.dock.isVisible() and center.window.isVisible()
+    assert not center.window.monochrome and center.window.dark
+    assert center.glass_control.isEnabled() and not center.glass_control.isChecked()
+    assert center.theme_control.isEnabled()
     assert center.dock.geometry().right() == center.dock.screen.availableGeometry().right()
     assert [entry.accessibleName() for entry in center.dock.entries] == [
         'Timer', 'Navegador', 'Efectos de escritorio', 'Editor']
@@ -205,8 +239,22 @@ with TemporaryDirectory() as temporary:
         dock.update_dock()
         assert not dock.capture_timer.isActive()
         dock.backdrop = None
+    dock.animation.start(1000)
+    dock.capture_timer.start(1000)
+    dock.photo_timer.start(1000)
+    dock.glass_timer.start(1000)
+    center.toggle_edge_dock_visibility()
+    assert not dock.isVisible()
+    assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
+    assert not any(timer.isActive() for timer in
+                   (dock.animation, dock.capture_timer, dock.photo_timer, dock.glass_timer))
+    center.update_tray_actions()
+    assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
+    center.toggle_edge_dock_visibility()
+    assert dock.isVisible() and dock.handle.isVisible() and dock.progress == 0.0
+    center.update_tray_actions()
+    assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.dock.close()
-    center.classic.close()
     center.window.close()
     center.tray.hide()
     center.count.close()

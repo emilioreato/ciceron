@@ -1,9 +1,10 @@
 """Cicerón: centro personal para Windows, interfaz Qt."""
 import ctypes, datetime as dt, json, math, os, sys, time, winreg
 from _ctypes import COMError
+from app_paths import application_root, data_root, resolve_app_path, stored_app_path, windows_appdata_root
 from app_packages import PACKAGE_EXT, PackageStore, app_tags, fold_search
 from browser_ui import BrowserDialog
-from center_ui import CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
+from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
 from visual_playground import VisualDialog
 from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, QTimer, QDate, QTime, Signal
@@ -17,7 +18,7 @@ from package_ui import edit_settings, install_packages
 from start_menu import StartMenuApps, pending_launches, request_launch
 from windows_glass import restore_above_taskbar
 
-DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Ciceron'
+DATA = data_root()
 CONFIG = DATA / 'config.json'; APPS = DATA / 'apps.json'
 PACKAGE_TAGS = DATA / 'etiquetas-paquetes.json'
 LAUNCH_REQUESTS = DATA / 'arranques-paquetes'
@@ -193,7 +194,7 @@ class App:
             self.cfg['theme'] = DEFAULT['theme']
         if self.cfg['clarity'] not in ('clear', 'balanced', 'contrast'):
             self.cfg['clarity'] = DEFAULT['clarity']
-        if self.cfg['ui_version'] not in ('v1', 'v2'):
+        if self.cfg['ui_version'] not in UI_VERSIONS:
             self.cfg['ui_version'] = DEFAULT['ui_version']
         try:
             self.cfg['interval'] = max(1, int(self.cfg['interval']))
@@ -201,11 +202,16 @@ class App:
             self.cfg['interval'] = DEFAULT['interval']
         self.apps, self.bad_apps=read(APPS,[])
         if not isinstance(self.apps,list) or any(not isinstance(i,dict) or not isinstance(i.get('name'),str) or not isinstance(i.get('path'),str) for i in self.apps): self.apps=[]; self.bad_apps=True
+        else:
+            try:
+                self.apps = [dict(item, path=str(resolve_app_path(item['path']))) for item in self.apps]
+            except (OSError, ValueError):
+                self.apps=[]; self.bad_apps=True
         self.package_tags, self.bad_package_tags = read(PACKAGE_TAGS, {})
         if not isinstance(self.package_tags, dict):
             self.package_tags, self.bad_package_tags = {}, True
-        self.packages = PackageStore(self.install_dir() / 'paquetes', DATA / 'datos-apps')
-        self.start_menu = StartMenuApps(DATA.parent / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Ciceron',
+        self.packages = PackageStore(DATA / 'paquetes', DATA / 'datos-apps')
+        self.start_menu = StartMenuApps(windows_appdata_root() / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Ciceron',
                                         self.install_dir() / 'Ciceron.exe')
         self.managed_apps = []
         self.package_error = None
@@ -218,12 +224,10 @@ class App:
         self.broken_config = broken or not isinstance(data, dict)
         self.dock = None
         self.dock_signature = None
-        self.classic = None
         from edge_dock import AppWheelFilter
         self.wheel_filter = AppWheelFilter(self)
         QApplication.instance().installNativeEventFilter(self.wheel_filter)
         self.library_snapshot = None
-        self.classic_snapshot = None
         self.build_window()
         self.apply_appearance()
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_appearance)
@@ -239,18 +243,12 @@ class App:
         self._count_screen=None
         QApplication.instance().primaryScreenChanged.connect(self._set_count_screen)
         self._set_count_screen(QApplication.primaryScreen())
-        self.count.clicked.connect(self.edit_goal)
+        self.count.clicked.connect(lambda: self.open_tool('clock'))
         self.tray=QSystemTrayIcon(icon()); menu=QMenu(self.window)
-        menu.addAction('Abrir Cicerón',self.open_center)
-        menu.addAction('General', lambda: self.open_page('general'))
-        menu.addAction('Ajustes', lambda: self.open_page('settings'))
-        menu.addAction('Estado', lambda: self.open_page('status'))
-        photo = menu.addAction('Preparar captura con Cicerón', self.prepare_glass_photo)
-        menu.aboutToShow.connect(lambda: photo.setEnabled(
-            getattr(QApplication.instance(), '_ciceron_overlay', None) is not None or
-            (self.dock is not None and self.dock.backdrop is not None)))
+        self.dock_visibility_action = menu.addAction('Ocultar barra lateral', self.toggle_edge_dock_visibility)
         menu.addSeparator()
-        menu.addAction('Timer',self.edit_goal); menu.addAction('Mostrar contador',self._show_count); menu.addAction('Ocultar contador',self._hide_count); menu.addAction('Cerrar efectos visuales',self.stop_visual_effects); menu.addSeparator(); menu.addAction('Salir',QApplication.quit)
+        menu.addAction('Salir', QApplication.quit)
+        menu.aboutToShow.connect(self.update_tray_actions)
         self.tray.setContextMenu(menu); self.tray.setToolTip('Cicerón'); self.tray.activated.connect(self.tray_clicked); self.tray.show()
         self.render(); self.timer=QTimer(); self.timer.timeout.connect(self.tick); self.timer.start(1000); self.tick()
         if self.cfg['show_timer'] and target(self.cfg): self._show_count()
@@ -259,7 +257,7 @@ class App:
             self.open_center()
         elif not CONFIG.exists() or not QSystemTrayIcon.isSystemTrayAvailable():
             self.open_center()
-        elif self.cfg['ui_version'] == 'v2':
+        else:
             self.show_edge_dock()
     def save(self):
         if self.broken_config:
@@ -358,18 +356,32 @@ class App:
         self.nav.button(self.page_ids['general']).setChecked(True)
 
     def apply_appearance(self, *_):
-        classic = self.cfg['ui_version'] == 'v1'
-        self.window.monochrome = classic
-        self.window.dark = False if classic else dark_mode(self.cfg['theme'])
-        self.window.glass = bool(self.cfg['glass']) and not classic
+        monochrome = self.cfg['ui_version'] == 'v1'
+        self.window.monochrome = monochrome
+        self.window.dark = False if monochrome else dark_mode(self.cfg['theme'])
+        self.window.glass = bool(self.cfg['glass']) and not monochrome
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
+        pure = self.cfg['ui_version'] == 'v3' and self.window.glass
+        QApplication.instance().setProperty('pureGlass', pure)
         if self.dock is not None:
+            self.dock.pure = pure
+            self.dock.monochrome = monochrome
             self.dock.set_glass(self.window.glass)
             self.dock.motion_enabled = bool(self.cfg['dock_motion'])
             self.dock.transparency = self.window.transparency
+            if self.dock.panel is not None:
+                self.dock.panel.apply_glass_tone(self.dock.panel.layer.light if self.window.glass else not self.window.dark)
+                self.dock.panel.layer.update()
             self.dock.layer.update()
             self.dock.update()
+        if hasattr(self, 'glass_control'):
+            blocked = self.glass_control.blockSignals(True)
+            self.glass_control.setChecked(self.window.glass)
+            self.glass_control.setEnabled(not monochrome)
+            self.glass_control.blockSignals(blocked)
+            self.clarity_control.setEnabled(self.window.glass)
+            self.theme_control.setEnabled(not monochrome)
         self.update_window_style()
         if hasattr(self, 'count'):
             self.update_timer_style()
@@ -384,6 +396,9 @@ class App:
         self.banner.glass = not self.window.monochrome
         app = QApplication.instance()
         appearance = stylesheet(self.window.dark, self.window.glass, self.window.monochrome)
+        self.banner.live = bool(app.property('pureGlass'))
+        if self.banner.live:
+            appearance += clear_styles()
         if app.styleSheet() != appearance:
             app.setStyleSheet(appearance)
         self.window.update()
@@ -454,14 +469,15 @@ class App:
         content.addWidget(caption('Apariencia', 'heading'))
         version = PreferenceBox()
         version.setAccessibleName('Versión de la interfaz')
-        version.addItem('V1 · Clásica', 'v1')
+        version.addItem('V1 · Clara', 'v1')
         version.addItem('V2 · Liquid Glass', 'v2')
         version.setCurrentIndex(version.findData(self.cfg['ui_version']))
         version.currentIndexChanged.connect(
             lambda index: self.change_preference('ui_version', version.itemData(index), version))
-        self.card(content, 'Interfaz', '', control=version)
+        self.card(content, 'Interfaz', 'Misma distribución; V1 sin Liquid Glass.', control=version)
         theme = PreferenceBox()
         theme.setAccessibleName('Tema')
+        self.theme_control = theme
         for label, value in (('Sistema', 'system'), ('Claro', 'light'), ('Oscuro', 'dark')):
             theme.addItem(label, value)
         theme.setCurrentIndex(max(0, theme.findData(self.cfg['theme'])))
@@ -472,9 +488,11 @@ class App:
         glass.setFixedSize(22, 22)
         glass.setAccessibleName('Material Liquid Glass')
         glass.setChecked(bool(self.cfg['glass']))
+        self.glass_control = glass
         glass.toggled.connect(lambda checked: self.change_preference('glass', checked, glass))
         self.card(content, 'Liquid Glass', '', control=glass)
         clarity = PreferenceBox()
+        self.clarity_control = clarity
         clarity.setAccessibleName('Transparencia del vidrio')
         for label, value in (('Alta', 'clear'), ('Media', 'balanced'), ('Baja', 'contrast')):
             clarity.addItem(label, value)
@@ -560,11 +578,8 @@ class App:
         self.apply_appearance()
 
     def switch_ui(self):
-        if self.dock is not None and self.dock.panel is not None:
-            self.dock.panel.close()
-        self.window.hide()
         self.apply_appearance()
-        self.open_center()
+        self.show_edge_dock()
 
     def select_page(self, key):
         index = self.page_ids[key]
@@ -578,11 +593,13 @@ class App:
     def open_page(self, key):
         self.wheel_filter.remember_foreground()
         self.select_page(key)
-        if self.dock is not None and self.dock.isVisible() and self.dock.screen:
+        self.show_edge_dock()
+        if self.dock.screen:
             if self.dock.panel is None or self.dock.panel.key != 'settings':
                 self.dock.toggle_panel('settings', lambda: self.window, persistent=True)
             else:
                 self.dock.panel.raise_()
+                self.dock.panel.activateWindow()
             return
         self.window.show()
         self.window.raise_()
@@ -590,17 +607,22 @@ class App:
 
     def open_center(self):
         self.show()
-        if self.cfg['ui_version'] == 'v2':
-            self.open_page('general')
+        self.open_page('general')
+
+    def update_tray_actions(self):
+        dock_visible = self.dock is not None and self.dock.isVisible()
+        self.dock_visibility_action.setEnabled(True)
+        self.dock_visibility_action.setText(
+            'Ocultar barra lateral' if dock_visible else 'Mostrar barra lateral')
+
+    def toggle_edge_dock_visibility(self):
+        if self.dock is not None and self.dock.isVisible():
+            self.dock.hide()
+        else:
+            self.show_edge_dock()
+            self.dock.reveal()
 
     def show(self):
-        if self.cfg['ui_version'] == 'v1':
-            if self.dock is not None:
-                self.dock.hide()
-            self.show_classic()
-            return
-        if self.classic is not None:
-            self.classic.hide()
         self.show_edge_dock()
         self.dock.reveal()
 
@@ -608,8 +630,10 @@ class App:
         if self.dock is None:
             from edge_dock import EdgeDock
             self.dock = EdgeDock(icon(), self.toggle_settings_panel)
+        self.dock.pure = bool(QApplication.instance().property('pureGlass'))
+        self.dock.monochrome = self.window.monochrome
         self.refresh_dock()
-        self.dock.set_glass(self.cfg['glass'])
+        self.dock.set_glass(self.window.glass)
         self.dock.motion_enabled = bool(self.cfg['dock_motion'])
         self.dock.transparency = self.window.transparency
         self.dock.show()
@@ -645,81 +669,23 @@ class App:
 
     def open_tool(self, key, *, from_start=False):
         self.wheel_filter.remember_foreground()
-        if self.dock is not None and self.dock.isVisible():
-            if from_start and self.dock.panel is not None and self.dock.panel.key == key:
-                self.dock.panel.raise_()
-                self.dock.panel.activateWindow()
-                return
-            factories = {
-                'clock': lambda: self.goal_dialog(attached=True),
-                'browser': lambda: BrowserDialog(self.window, attached=True),
-                'effects': lambda: VisualDialog(self.window, attached=True, dock_provider=lambda: self.dock),
-            }
-            self.dock.toggle_panel(key, factories[key])
-            if from_start:
-                self.dock.panel.activateWindow()
-        else:
-            {'clock': self.edit_goal, 'browser': self.browser_settings, 'effects': self.visual_playground}[key]()
-
-    def show_classic(self):
-        if self.classic is None:
-            self.classic = QWidget()
-            self.classic.setWindowTitle('Mi centro')
-            self.classic.setWindowIcon(icon())
-            self.classic.resize(500, 430)
-            self.classic.setMinimumSize(420, 300)
-            self.classic.setStyleSheet('''
-                QWidget { background: #fafafa; color: #202020; font: 13px "Segoe UI"; }
-                QLabel#classicTitle { font-size: 23px; font-weight: 650; }
-                QLabel#heading { font-size: 15px; font-weight: 650; }
-                QLabel#muted { color: #555555; }
-                QFrame#card { background: #fff; border: 1px solid #ddd; border-radius: 6px; }
-                QPushButton { background: #fff; color: #202020; border: 1px solid #bbb;
-                              border-radius: 5px; padding: 6px 11px; }
-                QPushButton:hover { background: #ededed; }
-                QPushButton#primary { background: #242424; color: white; }
-                QPushButton:focus { border: 2px solid #444; }
-            ''')
-            content = QVBoxLayout(self.classic)
-            content.setContentsMargins(22, 19, 22, 16)
-            header = QHBoxLayout()
-            header.addWidget(caption('Mi centro', 'classicTitle'), 1)
-            header.addWidget(button('Añadir aplicación', self.add_app, True))
-            content.addLayout(header)
-            scroll, self.classic_rows = scrolled_page(self.classic)
-            content.addWidget(scroll, 1)
-            footer = QHBoxLayout()
-            footer.addWidget(button('Ajustes', lambda: self.open_page('settings')))
-            footer.addStretch()
-            footer.addWidget(button('Cerrar', self.classic.hide))
-            content.addLayout(footer)
-        self.render_classic()
-        self.classic.show()
-        self.classic.raise_()
-        self.classic.activateWindow()
-
-    def render_classic(self):
-        snapshot = (self.cfg['target'], self.apps, self.managed_apps)
-        if snapshot == self.classic_snapshot:
+        factories = {
+            'clock': lambda: self.goal_dialog(attached=True),
+            'browser': lambda: BrowserDialog(self.window, attached=True),
+            'effects': lambda: VisualDialog(self.window, attached=True, dock_provider=lambda: self.dock),
+        }
+        factory = factories.get(key)
+        if factory is None:
             return
-        self.classic_snapshot = snapshot
-        while self.classic_rows.count():
-            widget = self.classic_rows.takeAt(0).widget()
-            widget.hide()
-            widget.deleteLater()
-        when = target(self.cfg)
-        label = remaining(when) if when else 'Configura tu objetivo'
-        self.card(self.classic_rows, 'Timer y enfoque', label, [('Configurar', self.edit_goal)])
-        self.card(self.classic_rows, 'Navegador', 'Pausa Feed', [('Configurar', self.browser_settings)])
-        self.card(self.classic_rows, 'Efectos de escritorio', 'Burbuja y partículas', [('Abrir', self.visual_playground)])
-        for entry in self.library_apps():
-            spec = entry.get('package')
-            remove = 'Desinstalar' if spec else 'Quitar'
-            actions = [('Abrir', lambda checked=False, item=entry: self.launch(item))]
-            if spec and spec['settings']:
-                actions.append(('Configurar', lambda checked=False, item=entry: edit_settings(self.classic, self.packages, item)))
-            actions.append((remove, lambda checked=False, item=entry: self.remove(item)))
-            self.card(self.classic_rows, entry['name'], self.app_description(entry), actions, image=self.app_icon(entry))
+        self.show_edge_dock()
+        self.dock.reveal()
+        if from_start and self.dock.panel is not None and self.dock.panel.key == key:
+            self.dock.panel.raise_()
+            self.dock.panel.activateWindow()
+            return
+        self.dock.toggle_panel(key, factory)
+        if from_start and self.dock.panel is not None:
+            self.dock.panel.activateWindow()
 
     def render(self):
         t = target(self.cfg)
@@ -737,8 +703,6 @@ class App:
             word = 'aplicación guardada' if total == 1 else 'aplicaciones guardadas'
             self.library_summary.setText(f'{total} {word}')
         self.refresh_dock()
-        if self.classic is not None and self.classic.isVisible():
-            self.render_classic()
         if self.pages.currentIndex() == self.page_ids['general']:
             self.render_library()
         elif self.pages.currentIndex() == self.page_ids['status']:
@@ -861,6 +825,10 @@ class App:
             old = previous.get(item['package']['id'])
             if old is not None and old['path'] != item['path']:
                 self.add_start_shortcut(item, previous=old)
+            elif old is None:
+                # Refresh an existing package shortcut after the portable folder
+                # has moved; StartMenuApps ignores items without a managed link.
+                self.add_start_shortcut(item, previous=item)
 
     def add_start_shortcut(self, item, previous=None):
         try:
@@ -912,7 +880,7 @@ class App:
 
     @staticmethod
     def install_dir():
-        return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Ciceron'
+        return application_root()
 
     def open_install_folder(self):
         folder = self.install_dir()
@@ -1055,8 +1023,9 @@ class App:
 
     def save_library(self, entries):
         try:
-            write(APPS, entries)
-        except OSError as error:
+            saved = [dict(item, path=stored_app_path(item['path'])) for item in entries]
+            write(APPS, saved)
+        except (OSError, ValueError) as error:
             QMessageBox.warning(self.window, 'No se pudo guardar', str(error))
             return False
         self.apps = entries
@@ -1126,7 +1095,7 @@ class App:
         date.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         date_field = QFrame()
         date_field.setObjectName('dateField')
-        date_field.setStyleSheet('''
+        date_field.setStyleSheet('' if QApplication.instance().property('pureGlass') else '''
             QFrame#dateField { background: white; border-radius: 9px; }
             QFrame#dateField QDateEdit { background: transparent; color: #202020; border: 1px solid transparent; }
             QFrame#dateField QPushButton#calendarButton { background: white; color: #383838; border: 1px solid transparent; padding: 4px 8px; }
@@ -1224,7 +1193,7 @@ class App:
         guard=ClearCheckBox('Avisos de distracción'); guard.setChecked(bool(self.cfg['guardian'])); box.addWidget(guard)
         box.addStretch()
         row=QHBoxLayout(); stop=button('Detener',lambda: d.done(2)); stop.setObjectName('destructive'); stop.setEnabled(bool(self.cfg['show_timer'] and t)); row.addWidget(stop)
-        stop.setStyleSheet('''
+        stop.setStyleSheet('' if QApplication.instance().property('pureGlass') else '''
             QPushButton#destructive { background: #ffeded; color: #8f242c; border: 1px solid #e9aab0; }
             QPushButton#destructive:hover, QPushButton#destructive:focus { border-color: #a94b53; }
             QPushButton#destructive:disabled { background: #eaeaea; color: #555555; border-color: transparent; }
@@ -1267,7 +1236,7 @@ class App:
         except FileNotFoundError: pass
         except OSError as e:
             QMessageBox.warning(self.window,'Inicio automático',f'No se pudo consultar el Registro: {e}'); return
-        install_dir=Path(os.environ.get('LOCALAPPDATA','')) / 'Ciceron'
+        install_dir=application_root()
         owned_paths={os.path.normcase(str(install_dir / 'Ciceron.exe'))}
         own_entry=isinstance(old_startup,str) and os.path.normcase(os.path.expandvars(old_startup.strip().strip('"'))) in owned_paths
         installed_executable=os.path.normcase(os.path.abspath(sys.executable)) in owned_paths

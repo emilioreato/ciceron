@@ -6,6 +6,7 @@ from PySide6.QtCore import QDate, QTime, Qt
 from PySide6.QtTest import QTest
 with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
  os.environ['APPDATA']=tmp
+ os.environ['CICERON_HOME']=str(Path(tmp)/'Aplicacion')
  path=Path(__file__).resolve().parents[1] / 'src' / 'ciceron.pyw'; l=importlib.machinery.SourceFileLoader('ci',str(path)); s=importlib.util.spec_from_loader(l.name,l); m=importlib.util.module_from_spec(s); l.exec_module(m)
  m.write(m.CONFIG,dict(m.DEFAULT,show_timer=False,guardian=False,interval='inválido'))
  a=m.QApplication([]); a.setQuitOnLastWindowClosed(False); c=m.App(); notices=[]

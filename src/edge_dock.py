@@ -12,7 +12,7 @@ from PySide6.QtGui import (
     QRegion, QShortcut, QSurfaceFormat
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QDialog, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
@@ -96,6 +96,14 @@ class DockIcon(QToolButton):
 
 class DockHandle(QToolButton):
     ARROW_RIGHT_INSET = 6
+
+    def contextMenuEvent(self, event):
+        dock = self.parentWidget()
+        menu = QMenu(self)
+        hide_action = menu.addAction('Ocultar barra lateral')
+        if menu.exec(event.globalPos()) is hide_action:
+            dock.hide()
+        event.accept()
 
     def paintEvent(self, event):
         dock = self.parentWidget()
@@ -187,6 +195,12 @@ class DockOptics(QOpenGLWidget):
         sample = ((x - left + surface[0] * view_width) / captured_width,
                   (y - top + surface[1] * view_height) / captured_height,
                   physical_width / captured_width, physical_height / captured_height)
+        if getattr(dock, 'pure', False):
+            from window_glass import draw_clear_material
+            draw_clear_material(self, self.program, self.uniform, rect, sample,
+                                (physical_width, physical_height), owner.CORNER_RADIUS,
+                                dock.glass_opacity() if owner is dock else 1.0)
+            return
         radius = owner.CORNER_RADIUS * view_width / viewport_w
         # Keep the shader's perimeter wave available; the dock rests still.
         paint_optic(self.program, self.uniform, physical_width, sample, QPointF(), phase,
@@ -338,10 +352,12 @@ class AttachedPanel(QWidget):
         return QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
 
     def apply_glass_tone(self, light):
-        from center_ui import stylesheet
-        self.dark = not light
+        from center_ui import clear_styles, stylesheet
+        self.dark = getattr(self.dock, 'pure', False) or not light
         line = '255,255,255' if self.dark else '0,0,0'
-        self.setStyleSheet(stylesheet(self.dark, False, neutral=True) + f'''
+        monochrome = bool(getattr(self.dock, 'monochrome', False))
+        self.setStyleSheet(stylesheet(self.dark, False, monochrome=monochrome,
+                                      neutral=not monochrome) + f'''
             QWidget#dockContent, QDialog#dockContent, QWidget#attachedViewport {{ background: transparent; }}
             QWidget#dockPanel QFrame#card, QWidget#dockPanel QFrame#timeCard {{
                 background: transparent; border: 0; border-radius: 12px;
@@ -383,7 +399,7 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: rgba({line},160); }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
-        ''')
+        ''' + (clear_styles('QWidget#dockPanel') if getattr(self.dock, 'pure', False) else ''))
         self.update()
 
     def dialog_finished(self):
@@ -531,6 +547,7 @@ class EdgeDock(QWidget):
         self.layer = DockOptics(self)
         self.panel = None
         self.panel_window = None
+        self.pending_panel = None
         self.backdrop = None
         self.last_frames = None
         self.layer.hide()
@@ -545,6 +562,7 @@ class EdgeDock(QWidget):
         self.handle.clicked.connect(self.reveal)
         self.using_glass = False
         self.glass_enabled = True
+        self.monochrome = False
         self.motion_enabled = True
         self.transparency = 0.0
         self.progress = 0.0
@@ -672,6 +690,7 @@ class EdgeDock(QWidget):
     def reset_to_handle(self):
         self.animation.stop()
         self.capture_timer.stop()
+        self.pending_panel = None
         self.leave_at = self.transition_to = self.progress = 0.0
         self.layout_icons()
         self.layer.update()
@@ -702,7 +721,7 @@ class EdgeDock(QWidget):
         over_dock = self.mask().contains(self.mapFromGlobal(QCursor.pos()))
         if over_dock:
             self.leave_at = now + self.HIDE_DELAY
-        target = float(self.panel is not None or now < self.leave_at)
+        target = float(self.panel is not None or self.pending_panel is not None or now < self.leave_at)
         previous = self.progress
         if self.transition_to != target:
             self.transition_start = now
@@ -727,6 +746,9 @@ class EdgeDock(QWidget):
             interval = 10 if self.progress != target or waiting_to_hide else 45
             if self.animation.interval() != interval:
                 self.animation.setInterval(interval)
+        if self.pending_panel is not None and self.progress >= 1.0:
+            request, self.pending_panel = self.pending_panel, None
+            QTimer.singleShot(0, self, lambda request=request: self.toggle_panel(*request))
 
     def layout_icons(self):
         rows = self.entries[:self.capacity] + [self.gear]
@@ -904,11 +926,22 @@ class EdgeDock(QWidget):
             super().keyPressEvent(event)
 
     def toggle_panel(self, key, factory, persistent=False):
+        if self.pending_panel is not None:
+            if self.pending_panel[0] == key:
+                self.pending_panel = None
+            else:
+                self.pending_panel = (key, factory, persistent)
+            self.reveal()
+            return
         previous = self.panel
         if previous is not None:
             previous.close()
             if previous.key == key:
                 return
+        if self.motion_enabled and self.progress < 1.0:
+            self.pending_panel = (key, factory, persistent)
+            self.reveal()
+            return
         content = factory()
         if content is None:
             return

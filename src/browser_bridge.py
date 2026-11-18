@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+from app_paths import data_root
 import queue
 import struct
 import subprocess
@@ -10,7 +11,7 @@ import threading
 import time
 import uuid
 
-DATA = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Ciceron'
+DATA = data_root()
 POLICY = DATA / 'navegador.json'
 SESSIONS = DATA / 'navegadores-activos'
 LIMIT = 1024 * 1024

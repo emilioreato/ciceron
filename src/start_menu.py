@@ -8,6 +8,7 @@ import re
 import uuid
 
 from app_packages import APP_ID, RESERVED, atomic_json, json_object
+from app_paths import application_root
 
 
 MARKER = 'Ciceron.Library:'
@@ -16,7 +17,14 @@ BUILTIN_TOOLS = frozenset(('clock', 'browser', 'effects'))
 
 def shortcut_id(item):
     package = item.get('package')
-    key = package['id'] if package else os.path.normcase(os.path.abspath(item['path']))
+    if package:
+        key = package['id']
+    else:
+        executable = Path(item['path']).resolve()
+        try:
+            key = 'portable:' + executable.relative_to(application_root().resolve()).as_posix().casefold()
+        except ValueError:
+            key = os.path.normcase(str(executable))
     return hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]
 
 

@@ -3,14 +3,14 @@ import time
 
 from OpenGL import GL
 from OpenGL.GL import shaders
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton
+    QAbstractButton, QAbstractSpinBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton, QWidget
 )
 
-from gpu_lens import EDGE_OPTICS, VERTEX
+from gpu_lens import EDGE_OPTICS, VERTEX, compile_lens, paint_optic
 from windows_glass import BackdropCapture, get_style, set_affinity
 
 
@@ -82,6 +82,50 @@ void main() {
 '''
 
 
+def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius, opacity=1.0):
+    """Draw the panel and its visible native controls from one desktop texture."""
+    owner = layer.parentWidget()
+    width, height = layer.width(), layer.height()
+    sx, sy = physical[0] / rect.width(), physical[1] / rect.height()
+    viewport = GL.glGetIntegerv(GL.GL_VIEWPORT)
+    def draw(area, corner, mode):
+        l, t = area.x(), area.y()
+        w, h = area.width(), area.height()
+        x, y = 2*l/width-1, 1-2*t/height
+        right, bottom = x+2*w/width, y-2*h/height
+        region = (sample[0]+(l-rect.x())/rect.width()*sample[2],
+                  sample[1]+(t-rect.y())/rect.height()*sample[3],
+                  w/rect.width()*sample[2], h/rect.height()*sample[3])
+        paint_optic(program, uniforms, w*sx, region, QPointF(), 0,
+                    ((x,bottom),(right,bottom),(right,y),(x,y)), body_height=h*sy,
+                    panel_radius=min(corner*sx, w*sx/2, h*sy/2),
+                    clear_mode=mode, glass_opacity=opacity)
+    draw(rect, radius, 1)
+    GL.glEnable(GL.GL_SCISSOR_TEST)
+    try:
+        for widget in owner.findChildren(QWidget):
+            if not isinstance(widget, (QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit)):
+                continue
+            if widget.window() != owner.window() or not widget.isVisible() or not widget.width() or not widget.height():
+                continue
+            if isinstance(widget, QLineEdit) and isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
+                continue
+            area = QRect(widget.mapTo(owner, QPoint()), widget.size())
+            clip = area.intersected(rect.toRect())
+            parent = widget.parentWidget()
+            while parent is not None and parent is not owner and not clip.isEmpty():
+                clip = clip.intersected(QRect(parent.mapTo(owner, QPoint()), parent.size()))
+                parent = parent.parentWidget()
+            if clip.isEmpty():
+                continue
+            GL.glScissor(round(clip.x()*viewport[2]/width),
+                         round((height-clip.y()-clip.height())*viewport[3]/height),
+                         round(clip.width()*viewport[2]/width), round(clip.height()*viewport[3]/height))
+            draw(QRectF(area), 11, 2)
+    finally:
+        GL.glDisable(GL.GL_SCISSOR_TEST)
+
+
 class GlassBackdrop(QOpenGLWidget):
     """A background OpenGL layer. The Qt controls keep their native input."""
 
@@ -116,6 +160,7 @@ class GlassBackdrop(QOpenGLWidget):
 
     def initializeGL(self):
         try:
+            self.clear_program, self.clear_uniforms = compile_lens()
             self.program = shaders.compileProgram(
                 shaders.compileShader(VERTEX, GL.GL_VERTEX_SHADER),
                 shaders.compileShader(FRAGMENT, GL.GL_FRAGMENT_SHADER))
@@ -252,6 +297,10 @@ class GlassBackdrop(QOpenGLWidget):
                                GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, self.frame.constBits())
                 self.size_on_gpu = (width, height)
             self.texture_dirty = False
+        if getattr(self, 'pure', False):
+            draw_clear_material(self, self.clear_program, self.clear_uniforms, QRectF(self.rect()),
+                                (0, 0, 1, 1), (width, height), 19)
+            return
         scale_x, scale_y = width / self.width(), height / self.height()
         pointer = self.mapFromGlobal(QCursor.pos())
         GL.glUseProgram(self.program)

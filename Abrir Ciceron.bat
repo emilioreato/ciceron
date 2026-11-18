@@ -1,9 +1,9 @@
 @echo off
 setlocal
-set "CICERON_EXE=%LOCALAPPDATA%\Ciceron\Ciceron.exe"
+set "CICERON_EXE=%~dp0Aplicacion\Ciceron.exe"
 
 if not exist "%CICERON_EXE%" (
-    echo No se encuentra Ciceron. Ejecuta Instalar.bat una vez para instalarlo.
+    echo No se encuentra Ciceron en la carpeta Aplicacion. Ejecuta Instalar.bat.
     pause
     exit /b 1
 )

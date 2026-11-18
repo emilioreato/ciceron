@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 with tempfile.TemporaryDirectory() as tmp:
     os.environ['APPDATA'] = tmp
     os.environ['LOCALAPPDATA'] = tmp
+    os.environ['CICERON_HOME'] = str(Path(tmp) / 'Aplicacion')
     path = Path(__file__).resolve().parents[1] / 'src' / 'ciceron.pyw'
     loader = importlib.machinery.SourceFileLoader('ciceron_prueba', str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -35,7 +36,7 @@ with tempfile.TemporaryDirectory() as tmp:
     warnings = []
     module.QMessageBox.warning = lambda *args: warnings.append(args[-1])
     original_executable = sys.executable
-    installed = str(Path(tmp) / 'Ciceron' / 'Ciceron.exe')
+    installed = str(Path(tmp) / 'Aplicacion' / 'Ciceron.exe')
     try:
         def interact(enable, change=None, enabled=True):
             def answer():
@@ -64,7 +65,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert registry.current == ('"' + installed + '"', registry.REG_SZ)
         interact(False)
         assert registry.current is None
-        registry.current = ('"%LOCALAPPDATA%\\Ciceron\\Ciceron.exe"', registry.REG_EXPAND_SZ)
+        registry.current = ('"%CICERON_HOME%\\Ciceron.exe"', registry.REG_EXPAND_SZ)
         interact(False)
         assert registry.current is None
         print('Inicio: copia externa, concurrencia, rutas expandibles y activación/desactivación verificados')

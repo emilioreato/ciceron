@@ -1,20 +1,28 @@
 param(
     [string]$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+    [string]$InstallDir = '',
     [switch]$NoLaunch,
     [switch]$SkipBrowser,
     [switch]$CloseRunning
 )
 $ErrorActionPreference = 'Stop'
+$repositoryRoot = Split-Path $PSScriptRoot -Parent
 $bundle = Join-Path $PSScriptRoot 'Ciceron'
 $source = Join-Path $bundle 'Ciceron.exe'
 $sourceRuntime = Join-Path $bundle '_internal'
-$installDir = Join-Path $env:LOCALAPPDATA 'Ciceron'
+$previousInstallDir = Join-Path $env:LOCALAPPDATA 'Ciceron'
+$previousExe = Join-Path $previousInstallDir 'Ciceron.exe'
+if (!$InstallDir) { $InstallDir = Join-Path $repositoryRoot 'Aplicacion' }
+$installDir = [IO.Path]::GetFullPath($InstallDir)
 $destination = Join-Path $installDir 'Ciceron.exe'
 $legacyInstallDir = Join-Path $env:LOCALAPPDATA 'GanaLaBatalla'
 $legacyExe = Join-Path $legacyInstallDir 'Ciceron.exe'
 $legacyNamedExe = Join-Path $legacyInstallDir 'GanaLaBatalla.exe'
 $legacyDataDir = Join-Path $env:APPDATA 'GanaLaBatalla'
-$dataDir = Join-Path $env:APPDATA 'Ciceron'
+$previousDataDir = Join-Path $env:APPDATA 'Ciceron'
+$dataDir = Join-Path $installDir 'datos'
+$previousPackagesDir = Join-Path $previousInstallDir 'paquetes'
+$packagesDir = Join-Path $dataDir 'paquetes'
 $stage = Join-Path $installDir 'Ciceron.instalando.tmp'
 $backup = Join-Path $installDir 'Ciceron.respaldo.tmp'
 $runtime = Join-Path $installDir '_internal'
@@ -68,6 +76,11 @@ function Test-OwnedRunState($State, [string[]]$AllowedPaths) {
     foreach ($path in $AllowedPaths) {
         if ([string]::Equals($target, [IO.Path]::GetFullPath($path), [StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
+    # Moving the repository leaves an obsolete absolute Run path. The installed
+    # layout is always Aplicacion\Ciceron.exe; ignore unrelated executable paths.
+    if ([IO.Path]::GetFileName($target) -ieq 'Ciceron.exe' -and
+        [IO.Path]::GetFileName((Split-Path -Parent $target)) -ieq 'Aplicacion' -and
+        !(Test-Path -LiteralPath $target)) { return $true }
     return $false
 }
 
@@ -99,7 +112,7 @@ function Merge-ConfigFile([string]$OldPath, [string]$CurrentPath) {
     }
 }
 
-function Copy-SafeTree([string]$From, [string]$To, [switch]$LegacyInstall, [switch]$MergeConfig, [switch]$AtRoot) {
+function Copy-SafeTree([string]$From, [string]$To, [switch]$LegacyInstall, [switch]$MergeConfig, [switch]$AtRoot, [switch]$SkipTransient) {
     $sourceItem = Get-Item -LiteralPath $From -Force
     if (!$sourceItem.PSIsContainer -or ($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw "La carpeta antigua no es segura para migrar: $From"
@@ -114,6 +127,8 @@ function Copy-SafeTree([string]$From, [string]$To, [switch]$LegacyInstall, [swit
     foreach ($item in Get-ChildItem -LiteralPath $From -Force) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "No se migran enlaces ni puntos de montaje: $($item.FullName)" }
         $target = Join-Path $To $item.Name
+        if ($LegacyInstall -and $AtRoot -and $item.Name -eq 'paquetes') { continue }
+        if ($SkipTransient -and $AtRoot -and $item.Name -in @('navegadores-activos','arranques-paquetes')) { continue }
         $managedLegacyFile = $LegacyInstall -and $AtRoot -and !$item.PSIsContainer -and (
             $item.Name -in @('Ciceron.exe','GanaLaBatalla.exe','ciceron-native-host.json','extension-path.txt',
                 'Ciceron.instalando.tmp','Ciceron.respaldo.tmp') -or
@@ -158,6 +173,26 @@ function Remove-SafeLegacyTree([string]$Path, [string]$ExpectedPath) {
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 
+function Remove-PreviousInstall([string]$Path, [string]$ExpectedPath) {
+    if (!(Test-Path -LiteralPath $Path)) { return }
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    if (![string]::Equals($resolved, [IO.Path]::GetFullPath($ExpectedPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Instalación anterior inesperada; se conserva: $resolved"
+    }
+    $rootItem = Get-Item -LiteralPath $resolved -Force
+    if (!$rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Instalación anterior insegura; se conserva: $resolved" }
+    $allowed = @('Ciceron.exe','GanaLaBatalla.exe','_internal','ciceron-native-host.json','extension-path.txt',
+        'Ciceron.instalando.tmp','Ciceron.respaldo.tmp','paquetes')
+    foreach ($item in Get-ChildItem -LiteralPath $resolved -Force) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "La instalación anterior contiene un enlace; se conserva: $($item.FullName)" }
+        if ($item.Name -notin $allowed -and $item.Name -notmatch '^CiceronHost-[0-9a-f]{16}\.exe$' -and
+            $item.Name -notmatch '^manifest-[0-9a-f]+\.(tmp|bak)$') {
+            throw "La instalación anterior contiene un archivo no reconocido; se conserva: $($item.Name)"
+        }
+    }
+    Remove-SafeLegacyTree -Path $resolved -ExpectedPath $ExpectedPath
+}
+
 function Stop-OwnedProcesses([string[]]$Paths, [switch]$Hosts) {
     if ($Hosts) {
         $processes = @(Get-Process -Name 'CiceronHost-*' -ErrorAction SilentlyContinue | Where-Object {
@@ -188,10 +223,11 @@ try {
     if (!(Test-Path -LiteralPath $RunKey)) { throw 'No se encuentra la clave de inicio de Windows.' }
 
     $hadExe = Test-Path -LiteralPath $destination -PathType Leaf
-    $alreadyInstalled = $hadExe -or (Test-Path -LiteralPath $legacyExe -PathType Leaf) -or (Test-Path -LiteralPath $legacyNamedExe -PathType Leaf)
+    $alreadyInstalled = $hadExe -or (Test-Path -LiteralPath $previousExe -PathType Leaf) -or
+        (Test-Path -LiteralPath $legacyExe -PathType Leaf) -or (Test-Path -LiteralPath $legacyNamedExe -PathType Leaf)
     $oldRun = Get-RunState $runName
     $oldLegacyRun = Get-RunState $legacyRunName
-    $ownedRunPaths = @($destination,$legacyExe,$legacyNamedExe)
+    $ownedRunPaths = @($destination,$previousExe,$legacyExe,$legacyNamedExe)
     if (!(Test-OwnedRunState $oldRun $ownedRunPaths)) { throw 'La entrada Ciceron del inicio apunta a otro programa. No se ha modificado.' }
     if (!(Test-OwnedRunState $oldLegacyRun $ownedRunPaths)) { throw 'La entrada antigua del inicio apunta a otro programa. No se ha modificado.' }
 
@@ -199,13 +235,13 @@ try {
     foreach ($shortcutPath in @($link,$legacyLink)) {
         if (Test-Path -LiteralPath $shortcutPath) {
             $currentTarget = $shell.CreateShortcut($shortcutPath).TargetPath
-            if ($currentTarget -notin @($destination,$legacyExe,$legacyNamedExe)) {
+            if ($currentTarget -notin @($destination,$previousExe,$legacyExe,$legacyNamedExe) -and (Test-Path -LiteralPath $currentTarget)) {
                 throw "El acceso $([IO.Path]::GetFileNameWithoutExtension($shortcutPath)) ya pertenece a otra aplicación. No se ha modificado."
             }
         }
     }
 
-    $ownedPaths = @($destination,$legacyExe,$legacyNamedExe)
+    $ownedPaths = @($destination,$previousExe,$legacyExe,$legacyNamedExe)
     $running = @(Get-Process -Name 'Ciceron','GanaLaBatalla' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $ownedPaths -contains $_.Path })
     if ($running.Count -gt 0 -and !$CloseRunning) {
         $answer = Read-Host 'Para instalar o reinstalar, hay que cerrar Cicerón. Los cambios no guardados se perderán. Escribe SI para continuar'
@@ -218,8 +254,11 @@ try {
     if ((Test-Path -LiteralPath $backup) -or (Test-Path -LiteralPath $runtimeBackup)) {
         throw "Existe una copia de recuperación pendiente en $installDir. No se sobrescribirá."
     }
-    if (Test-Path -LiteralPath $legacyInstallDir) { Copy-SafeTree -From $legacyInstallDir -To $installDir -LegacyInstall -AtRoot }
-    if (Test-Path -LiteralPath $legacyDataDir) { Copy-SafeTree -From $legacyDataDir -To $dataDir -MergeConfig -AtRoot }
+    if (Test-Path -LiteralPath $previousPackagesDir) { Copy-SafeTree -From $previousPackagesDir -To $packagesDir }
+    $legacyPackagesDir = Join-Path $legacyInstallDir 'paquetes'
+    if (Test-Path -LiteralPath $legacyPackagesDir) { Copy-SafeTree -From $legacyPackagesDir -To $packagesDir }
+    if (Test-Path -LiteralPath $legacyDataDir) { Copy-SafeTree -From $legacyDataDir -To $dataDir -MergeConfig -AtRoot -SkipTransient }
+    if (Test-Path -LiteralPath $previousDataDir) { Copy-SafeTree -From $previousDataDir -To $dataDir -MergeConfig -AtRoot -SkipTransient }
 
     $tempLink = Join-Path $menu ('.Ciceron-' + [guid]::NewGuid().ToString('N') + '.lnk')
     $shortcut = $shell.CreateShortcut($tempLink)
@@ -269,7 +308,7 @@ try {
             $graphicsKey = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
             if (!(Test-Path -LiteralPath $graphicsKey)) { New-Item -Path $graphicsKey -Force | Out-Null }
             $graphics = Get-Item -LiteralPath $graphicsKey
-            foreach ($oldPath in @($legacyExe,$legacyNamedExe)) {
+            foreach ($oldPath in @($previousExe,$legacyExe,$legacyNamedExe)) {
                 if ($graphics.GetValue($oldPath) -eq 'GpuPreference=2;') {
                     if ($null -eq $graphics.GetValue($destination)) { New-ItemProperty -LiteralPath $graphicsKey -Name $destination -Value 'GpuPreference=2;' -PropertyType String | Out-Null }
                     Remove-ItemProperty -LiteralPath $graphicsKey -Name $oldPath -ErrorAction SilentlyContinue
@@ -286,24 +325,34 @@ try {
         if ($LASTEXITCODE -ne 0) { Write-Warning 'La aplicación está instalada, pero la integración del navegador quedó pendiente. Revisa el mensaje anterior o usa Preparar navegador en Cicerón.' }
     } elseif (!$SkipBrowser) { Write-Warning 'El paquete no incluye la preparación del navegador.' }
 
-    if (Test-Path -LiteralPath $legacyDataDir) { Remove-SafeLegacyTree -Path $legacyDataDir -ExpectedPath $legacyDataDir }
+    $previousManifest = Join-Path $previousInstallDir 'ciceron-native-host.json'
     $oldManifest = Join-Path $legacyInstallDir 'ciceron-native-host.json'
     $oldManifestReferenced = $false
     foreach ($vendor in @('Google\Chrome','Microsoft\Edge')) {
         $nativeKey = 'HKCU:\Software\' + $vendor + '\NativeMessagingHosts\com.ciceron.browser'
         if (Test-Path -LiteralPath $nativeKey) {
-            if ([string]::Equals((Get-Item -LiteralPath $nativeKey).GetValue(''),$oldManifest,[StringComparison]::OrdinalIgnoreCase)) { $oldManifestReferenced = $true }
+            $registeredManifest = (Get-Item -LiteralPath $nativeKey).GetValue('')
+            if ($registeredManifest -and ($registeredManifest -in @($oldManifest,$previousManifest) -or
+                ([IO.Path]::GetFileName($registeredManifest) -ieq 'ciceron-native-host.json' -and !(Test-Path -LiteralPath $registeredManifest)))) { $oldManifestReferenced = $true }
         }
     }
     if ($oldManifestReferenced) {
         Write-Warning 'Se conservó temporalmente la carpeta antigua porque un navegador todavía apunta a su puente nativo.'
-    } elseif (Test-Path -LiteralPath $legacyInstallDir) {
+    } else {
+        if (Test-Path -LiteralPath $previousDataDir) { Remove-SafeLegacyTree -Path $previousDataDir -ExpectedPath $previousDataDir }
+        if (Test-Path -LiteralPath $legacyDataDir) { Remove-SafeLegacyTree -Path $legacyDataDir -ExpectedPath $legacyDataDir }
+    }
+    if (!$oldManifestReferenced -and (Test-Path -LiteralPath $legacyInstallDir)) {
         $oldShortcut = Join-Path $menu 'Gana la batalla.lnk'
         if (Test-Path -LiteralPath $oldShortcut) {
             $oldTarget = $shell.CreateShortcut($oldShortcut).TargetPath
             if ($oldTarget -in @($legacyExe,$legacyNamedExe)) { Remove-Item -LiteralPath $oldShortcut -Force }
         }
         Remove-SafeLegacyTree -Path $legacyInstallDir -ExpectedPath $legacyInstallDir
+    }
+    if (!$oldManifestReferenced -and (Test-Path -LiteralPath $previousInstallDir)) {
+        try { Remove-PreviousInstall -Path $previousInstallDir -ExpectedPath $previousInstallDir }
+        catch { Write-Warning "Se conservó la instalación anterior para proteger archivos: $($_.Exception.Message)" }
     }
     try {
         . (Join-Path $PSScriptRoot 'accesos_inicio.ps1')

@@ -19,10 +19,17 @@ function Get-CiceronToolShortcuts($tool) {
 }
 
 function Test-CiceronToolShortcut($shell, [string]$path, [string]$id, [string]$destination) {
+    if (!(Test-OwnedCiceronToolShortcut $shell $path $id)) { return $false }
+    $link = $shell.CreateShortcut($path)
+    return $link.TargetPath -eq $destination
+}
+
+function Test-OwnedCiceronToolShortcut($shell, [string]$path, [string]$id) {
     $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
     if (!$item -or $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
     $link = $shell.CreateShortcut($path)
-    return $link.TargetPath -eq $destination -and $link.Arguments -ceq "--abrir-herramienta $id"
+    return ([IO.Path]::GetFileName($link.TargetPath) -ieq 'Ciceron.exe' -and
+        $link.Arguments -ceq "--abrir-herramienta $id")
 }
 
 function Install-CiceronToolShortcuts($shell, [string]$menu, [string]$destination) {
@@ -38,7 +45,7 @@ function Install-CiceronToolShortcuts($shell, [string]$menu, [string]$destinatio
             if (!(Write-CiceronToolShortcut $shell $directory $destination $tool $entry)) { $registered = $false }
         }
         $oldPath = Join-Path $directory ($tool.OldName + '.lnk')
-        if ($registered -and (Test-CiceronToolShortcut $shell $oldPath $tool.Id $destination)) {
+        if ($registered -and (Test-OwnedCiceronToolShortcut $shell $oldPath $tool.Id)) {
             Remove-Item -LiteralPath $oldPath -Force
         }
     }
@@ -56,11 +63,12 @@ function Write-CiceronToolShortcut($shell, [string]$directory, [string]$destinat
         $link.Description = 'Cicerón · ' + ($tool.Tags -join ', ')
         $link.Save()
         [Ciceron.ShellLinkProperties]::Set($stageLink, $entry.AppId, [string[]]$tool.Tags)
-        if (Test-CiceronToolShortcut $shell $path $tool.Id $destination) {
+        if (Test-OwnedCiceronToolShortcut $shell $path $tool.Id) {
             $backupLink = Join-Path $directory ('.Ciceron-respaldo-' + [guid]::NewGuid().ToString('N') + '.lnk')
             [IO.File]::Replace($stageLink, $path, $backupLink, $true)
             if (Test-Path -LiteralPath $backupLink) { Remove-Item -LiteralPath $backupLink -Force }
         } else {
+            if (Test-Path -LiteralPath $path) { throw "El acceso «$($entry.Name)» pertenece a otro programa; no se sobrescribió." }
             [IO.File]::Move($stageLink, $path)
         }
         return $true

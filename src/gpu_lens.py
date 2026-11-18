@@ -32,6 +32,7 @@ uniform vec2 interaction;
 uniform vec4 surface;
 uniform float panel_radius;
 uniform float glass_tone;
+uniform float clear_mode;
 uniform float glass_blur;
 uniform float glass_opacity;
 uniform float elapsed;
@@ -74,6 +75,28 @@ void main() {
         float depth = (0.975 - edge) * diameter * 0.5;
         vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
+        if (clear_mode > 0.5) {
+            vec2 pixel = sample_scale / extent;
+            // Binomial weights approximate a Gaussian on the button's backdrop.
+            vec2 d = pixel * (clear_mode > 1.5 ? 3.2 : 0.38);
+            vec3 color = texture2D(backdrop, coord).rgb * 0.25;
+            color += (texture2D(backdrop, coord + vec2(d.x, 0.0)).rgb
+                    + texture2D(backdrop, coord - vec2(d.x, 0.0)).rgb
+                    + texture2D(backdrop, coord + vec2(0.0, d.y)).rgb
+                    + texture2D(backdrop, coord - vec2(0.0, d.y)).rgb) * 0.125;
+            color += (texture2D(backdrop, coord+d).rgb + texture2D(backdrop, coord-d).rgb
+                    + texture2D(backdrop, coord+vec2(d.x,-d.y)).rgb
+                    + texture2D(backdrop, coord+vec2(-d.x,d.y)).rgb) * 0.0625;
+            if (clear_mode < 1.5) {
+                vec2 fringe = pixel * normal * 2.2 * bevel;
+                vec2 split = vec2(texture2D(backdrop, coord-fringe).r,
+                                  texture2D(backdrop, coord+fringe).b);
+                color.rb += clamp(split-color.rb, -0.18, 0.18) * bevel;
+            }
+            float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
+            gl_FragColor = vec4(color*alpha, alpha);
+            return;
+        }
         float blur = glass_blur + (appearance - 1.0) * 3.0;
         vec3 color = texture2D(backdrop, coord, blur).rgb;
         float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
@@ -175,7 +198,7 @@ def compile_lens():
     program = shaders.compileProgram(shaders.compileShader(VERTEX, GL.GL_VERTEX_SHADER),
                                      shaders.compileShader(FRAGMENT, GL.GL_FRAGMENT_SHADER))
     names = ('backdrop', 'pixels', 'body_height', 'interaction', 'surface', 'panel_radius',
-             'glass_tone', 'glass_blur', 'glass_opacity', 'sample_origin', 'sample_scale',
+             'glass_tone', 'clear_mode', 'glass_blur', 'glass_opacity', 'sample_origin', 'sample_scale',
              'motion', 'elapsed', 'appearance')
     return program, {name: GL.glGetUniformLocation(program, name) for name in names}
 
@@ -193,7 +216,7 @@ def make_lens_texture():
 
 def paint_optic(program, uniform, pixel_width, sample_rect, motion, elapsed, vertices, appearance=1.0,
                 body_height=0.0, interaction=(0.0, 0.0), panel_radius=0.0,
-                surface=(0.0, 0.0, 1.0, 1.0), glass_tone=0.0, glass_blur=0.0, glass_opacity=1.0):
+                surface=(0.0, 0.0, 1.0, 1.0), glass_tone=0.0, glass_blur=0.0, glass_opacity=1.0, clear_mode=0.0):
     GL.glUseProgram(program)
     GL.glUniform1i(uniform['backdrop'], 0)
     GL.glUniform1f(uniform['pixels'], pixel_width)
@@ -201,6 +224,7 @@ def paint_optic(program, uniform, pixel_width, sample_rect, motion, elapsed, ver
     GL.glUniform2f(uniform['interaction'], *interaction)
     GL.glUniform4f(uniform['surface'], *surface)
     GL.glUniform1f(uniform['panel_radius'], panel_radius)
+    GL.glUniform1f(uniform['clear_mode'], clear_mode)
     GL.glUniform1f(uniform['glass_tone'], glass_tone)
     GL.glUniform1f(uniform['glass_blur'], glass_blur)
     GL.glUniform1f(uniform['glass_opacity'], glass_opacity)

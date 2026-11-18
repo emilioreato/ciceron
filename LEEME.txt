@@ -14,7 +14,7 @@ En Ajustes puedes elegir tema claro, oscuro o del sistema y activar o desactivar
 
 Para quitar la aplicación y su entrada de inicio en el Registro, ejecuta Desinstalar.bat y confirma. Si está abierta, se cerrará tras tu confirmación. La configuración personal se conserva. Entradas o accesos que pertenezcan a otros programas no se eliminan.
 
-La carpeta internos contiene el ejecutable y el instalador. Mantén esa carpeta junto a Instalar.bat y Desinstalar.bat. Para desarrollar la aplicación, consulta DESARROLLO.md.
+La carpeta Aplicacion contiene el ejecutable, la extensión y los datos. La carpeta internos contiene el paquete de compilación y los instaladores. Mantén la estructura del repositorio; puedes mover la carpeta completa. Después de moverla, ejecuta Instalar.bat para actualizar las rutas de Windows. Para desarrollar la aplicación, consulta DESARROLLO.md.
 
 Si ya habías desactivado el inicio automático desde Cicerón, reinstalarlo conserva esa elección. Al repetir la instalación se reemplaza el ejecutable, incluso si es la misma versión. La desinstalación se puede repetir de forma segura.
 
@@ -24,13 +24,13 @@ Para iniciar una cuenta, abre Mi centro, pulsa Configurar, elige fecha y pulsa G
 
 NAVEGADOR (opcional)
 
-Instalar.bat actualiza la carpeta «00 EXTENSION» junto a este archivo y prepara su puente para Chrome, Brave y Edge detectados. Abre Mi centro > Navegador > Preparar navegador, elige el navegador y sigue las instrucciones: activa el modo desarrollador y selecciona la carpeta «00 EXTENSION» junto a Instalar.bat con «Cargar descomprimida». Repite en cada perfil que quieras usar y recarga las pestañas abiertas. Después de actualizar Cicerón, pulsa «Recargar» en la tarjeta de la extensión y recarga las pestañas abiertas. La instalación de extensiones locales requiere este paso manual en cada navegador.
+Instalar.bat actualiza la carpeta «Aplicacion\00 EXTENSION» y prepara su puente para Chrome, Brave y Edge detectados. Abre Cicerón > Navegador > Preparar navegador, elige el navegador y sigue las instrucciones: activa el modo desarrollador y selecciona «Aplicacion\00 EXTENSION» con «Cargar descomprimida». Repite en cada perfil que quieras usar y recarga las pestañas abiertas. Después de actualizar Cicerón, pulsa «Recargar» en la tarjeta de la extensión y recarga las pestañas abiertas. La instalación de extensiones locales requiere este paso manual en cada navegador.
 
 Comprueba que Cicerón navegador funciona antes de desactivar la antigua Pausa Feed; mantener ambas activas duplica las reglas. Al ser una extensión nueva, el estado de pausa anterior no se transfiere automáticamente: revisa si Pausa Feed está activo. Desde Mi centro > Navegador puedes activarlo o pausarlo con la misma frase de antes, y elegir elementos que ocultar en X.
 
 Cicerón funciona sin extensión. La extensión conserva la última configuración recibida de Cicerón si el puente no está disponible. Su menú ofrece Abrir Cicerón. Consulta y cambia el estado en Cicerón → Navegador. El puente no recibe direcciones ni contenido de las páginas. Al desinstalar Cicerón se retira el puente del Registro y se conservan los datos y la carpeta «00 EXTENSION» para que el navegador pueda seguir usándola; para retirarla por completo, elimínala desde la página de extensiones del navegador. Firefox no está incluido.
 
-Mantén la carpeta 00 EXTENSION en su sitio mientras el navegador la use. Si mueves la carpeta de Cicerón, vuelve a cargarla en el navegador y ejecuta Instalar.bat de nuevo.
+Mantén «Aplicacion\00 EXTENSION» en su sitio mientras el navegador la use. Si mueves la carpeta de Cicerón, vuelve a cargar la extensión desde su nueva ubicación y ejecuta Instalar.bat de nuevo.
 
 ESPACIO VISUAL
 

@@ -1,11 +1,16 @@
 ﻿param(
     [string]$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     [string]$NativeRoot = 'HKCU:\Software',
+    [string]$InstallDir = '',
     [switch]$Confirmar
 )
 $ErrorActionPreference = 'Stop'
-$installDir = Join-Path $env:LOCALAPPDATA 'Ciceron'
+$repositoryRoot = Split-Path $PSScriptRoot -Parent
+if (!$InstallDir) { $InstallDir = Join-Path $repositoryRoot 'Aplicacion' }
+$installDir = [IO.Path]::GetFullPath($InstallDir)
 $destination = Join-Path $installDir 'Ciceron.exe'
+$previousInstallDir = Join-Path $env:LOCALAPPDATA 'Ciceron'
+$previousExe = Join-Path $previousInstallDir 'Ciceron.exe'
 $legacyInstallDir = Join-Path $env:LOCALAPPDATA 'GanaLaBatalla'
 $legacyExe = Join-Path $legacyInstallDir 'Ciceron.exe'
 $legacyNamedExe = Join-Path $legacyInstallDir 'GanaLaBatalla.exe'
@@ -15,7 +20,7 @@ $locked = $false
 try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (!$locked) { throw 'Ya hay una instalación o desinstalación en curso. Espera a que termine.' }
-    $ownedPaths = @($destination,$legacyExe,$legacyNamedExe,(Join-Path $installDir 'GanaLaBatalla.exe'))
+    $ownedPaths = @($destination,$previousExe,$legacyExe,$legacyNamedExe,(Join-Path $installDir 'GanaLaBatalla.exe'))
     $running = @(Get-Process -Name 'Ciceron','GanaLaBatalla' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $ownedPaths -contains $_.Path })
     if (!$Confirmar) {
         $question = 'Se quitarán Cicerón y su inicio automático. La configuración personal se conservará.'
@@ -34,7 +39,7 @@ try {
                 $value = $entry.$runName
                 if ($value -is [string]) {
                     $target = [Environment]::ExpandEnvironmentVariables($value.Trim().Trim('"'))
-                    if ($target -in $ownedPaths) { Remove-ItemProperty -LiteralPath $RunKey -Name $runName }
+                    if ($target -in $ownedPaths -or ($runName -eq 'Ciceron' -and [IO.Path]::GetFileName($target) -ieq 'Ciceron.exe' -and !(Test-Path -LiteralPath $target))) { Remove-ItemProperty -LiteralPath $RunKey -Name $runName }
                     else { Write-Warning "Se conservó la entrada $runName porque apunta a otro programa." }
                 } else { Write-Warning "Se conservó la entrada $runName porque tiene un formato desconocido." }
             }
@@ -57,7 +62,7 @@ try {
             $names = @((Get-CiceronToolShortcuts $tool).Name) + $tool.OldName
             foreach ($name in $names) {
                 $toolLink = Join-Path $libraryLinks ($name + '.lnk')
-                if (Test-CiceronToolShortcut $shell $toolLink $tool.Id $destination) {
+                if (Test-OwnedCiceronToolShortcut $shell $toolLink $tool.Id) {
                     Remove-Item -LiteralPath $toolLink -Force
                 }
             }
@@ -73,12 +78,15 @@ try {
         }
     }
     $manifest = Join-Path $installDir 'ciceron-native-host.json'
+    $previousManifest = Join-Path $previousInstallDir 'ciceron-native-host.json'
     $legacyManifest = Join-Path $legacyInstallDir 'ciceron-native-host.json'
     foreach ($vendor in @('Google\Chrome','Microsoft\Edge')) {
         $key = $NativeRoot + '\' + $vendor + '\NativeMessagingHosts\com.ciceron.browser'
         if (Test-Path -LiteralPath $key) {
             $item = Get-Item -LiteralPath $key
-            if ($item.GetValue('') -eq $manifest -or $item.GetValue('') -eq $legacyManifest) {
+            $registered = $item.GetValue('')
+            if ($registered -in @($manifest,$previousManifest,$legacyManifest) -or
+                ([IO.Path]::GetFileName([string]$registered) -ieq 'ciceron-native-host.json' -and !(Test-Path -LiteralPath $registered))) {
                 if (!$key.StartsWith('HKCU:\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Raíz del Registro no compatible.' }
                 $writable=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key.Substring(6),$true)
                 try { $writable.DeleteValue('', $false); $empty=$writable.GetValueNames().Count -eq 0 -and $writable.GetSubKeyNames().Count -eq 0 } finally { $writable.Dispose() }
@@ -86,7 +94,7 @@ try {
             } else { Write-Warning 'Se conservó un registro de navegador que apunta a otro puente.' }
         }
     }
-    $installRoots = @($installDir,$legacyInstallDir)
+    $installRoots = @($installDir,$previousInstallDir,$legacyInstallDir)
     $hosts = @(Get-Process -Name 'CiceronHost-*' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $installRoots -contains (Split-Path -Parent $_.Path) -and (Split-Path -Leaf $_.Path) -match '^CiceronHost-[0-9a-f]{16}\.exe$' })
     foreach ($process in $hosts) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
     foreach ($process in $hosts) { try { $process.WaitForExit(5000) | Out-Null } catch [System.InvalidOperationException] { } }
@@ -95,7 +103,7 @@ try {
         if ($file.Name -match '^CiceronHost-[0-9a-f]{16}\.exe$') { Remove-Item -LiteralPath $file.FullName -Force }
       }
     }
-    foreach ($manifestPath in @($manifest,$legacyManifest)) {
+    foreach ($manifestPath in @($manifest,$previousManifest,$legacyManifest)) {
       if (Test-Path -LiteralPath $manifestPath) {
         try { $data=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $data=$null }
         if ($data.name -eq 'com.ciceron.browser' -and @($data.allowed_origins).Count -eq 1 -and @($data.allowed_origins)[0] -eq 'chrome-extension://cmbcmfhajdjlcepmkhjnfooadbccljpk/') { Remove-Item -LiteralPath $manifestPath -Force }

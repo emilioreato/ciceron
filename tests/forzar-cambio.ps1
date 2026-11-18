@@ -1,4 +1,4 @@
-param([string]$Installer,[string]$RunKey)
+param([string]$Installer,[string]$RunKey,[string]$InstallDir)
 $script:lecturas = 0
 function Get-Item {
     [CmdletBinding()]
@@ -11,5 +11,5 @@ function Get-Item {
     }
     Microsoft.PowerShell.Management\Get-Item @PSBoundParameters
 }
-& $Installer -RunKey $RunKey -NoLaunch
+& $Installer -RunKey $RunKey -InstallDir $InstallDir -NoLaunch
 if (!$?) { exit 1 }

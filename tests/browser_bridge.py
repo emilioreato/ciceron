@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 SOURCE=Path(__file__).resolve().parents[1]/'src'/'browser_bridge.py'
+sys.path.insert(0,str(SOURCE.parent))
 spec=importlib.util.spec_from_file_location('browser_bridge_test',SOURCE)
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
@@ -32,12 +33,12 @@ class BridgeTests(unittest.TestCase):
   with self.assertRaises(ValueError): m.validate({'enabled':1})
  def test_atomic_policy_and_host_disconnect(self):
   with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
-   env=os.environ.copy(); env['APPDATA']=folder
+   env=os.environ.copy(); env['APPDATA']=folder; env['CICERON_HOME']=str(Path(folder)/'Aplicacion')
    p=subprocess.Popen([sys.executable,str(SOURCE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
    try:
     m.send_message(p.stdin,{'type':'hello','browser':'Brave'})
     first=m.read_message(p.stdout); self.assertEqual(first,{'type':'policy','policy':m.DEFAULT})
-    data=Path(folder)/'Ciceron'; data.mkdir(exist_ok=True)
+    data=Path(folder)/'Aplicacion'/'datos'; data.mkdir(parents=True,exist_ok=True)
     (data/'navegador.json').write_text(json.dumps({'enabled':False,'x_selectors':['aside']}),encoding='utf-8')
     second=m.read_message(p.stdout); self.assertFalse(second['policy']['enabled']); self.assertEqual(second['policy']['x_selectors'],['aside'])
     p.stdin.close(); self.assertEqual(p.wait(timeout=8),0)

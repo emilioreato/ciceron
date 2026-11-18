@@ -94,8 +94,9 @@ El manifiesto controla la rueda sobre el icono de Cicerón. Tu ejecutable contro
 - **Reimportar.** El mismo ID, versión y contenido deja una sola entrada. Cambiar el contenido con el mismo número produce un error. Una versión inferior a la instalada también produce un error.
 - **Actualizar.** Vuelve a importar un paquete con el mismo ID y una versión superior. El dock y la biblioteca pasan a apuntar a la versión nueva y se conserva la carpeta de datos. Cierra la versión anterior antes de actualizar si la tienes abierta.
 - **Desinstalar.** En el menú de la tarjeta, elige **Desinstalar paquete**. Cicerón retira la entrada y el icono y limpia el código gestionado. Si hay archivos en uso, volverá a intentar retirarlos al arrancar. Conserva los datos de la app para una futura reinstalación. Usa **Abrir datos** antes de desinstalar si quieres localizarlos.
-- **Rutas.** Código y registro de paquetes en `%LOCALAPPDATA%\Ciceron\paquetes`. Datos en `%APPDATA%\Ciceron\datos-apps\<id>`. Cicerón continúa admitiendo archivos y accesos vinculados por separado.
-- **Retirar el centro.** `Desinstalar.bat` retira Cicerón y conserva su almacén de paquetes para que puedas recuperarlo al reinstalar el centro.
+- **Rutas.** Las versiones, el registro de paquetes y los datos persistentes están bajo `Aplicacion\datos\`: paquetes en `paquetes\` y datos por aplicación en `datos-apps\<id>`. Los accesos a ejecutables dentro de `Aplicacion\` se guardan relativamente; los accesos a programas externos conservan su ubicación externa. Las apps deben usar `CICERON_APP_DATA` para escribir sus datos; no deben guardar archivos modificables junto al ejecutable.
+- **Mover el centro.** Puedes mover la carpeta del repositorio completa. Las rutas internas se calculan desde el ejecutable y el directorio de cada paquete. Después ejecuta `Instalar.bat` en la nueva ubicación para actualizar los accesos y registros de Windows y del puente del navegador.
+- **Retirar el centro.** `Desinstalar.bat` retira Cicerón y conserva `Aplicacion\datos\` y la extensión para que puedas recuperarlas al reinstalar el centro.
 
 ## Ejemplo reproducible
 
