@@ -13,8 +13,9 @@ class LiveReload(QObject):
         self.source = Path(source)
         self.watcher = QFileSystemWatcher(self)
         self.timer = QTimer(self, interval=650, singleShot=True)
-        self.watcher.fileChanged.connect(lambda _: self.timer.start())
-        self.watcher.directoryChanged.connect(lambda _: self.timer.start())
+        self.retries = 0
+        self.watcher.fileChanged.connect(self.schedule_check)
+        self.watcher.directoryChanged.connect(self.schedule_check)
         self.timer.timeout.connect(self.check)
         try:
             observed_digest = self.scan()
@@ -23,6 +24,10 @@ class LiveReload(QObject):
         self.digest = initial_digest or observed_digest
         if self.digest != observed_digest or observed_digest is None:
             self.timer.start()
+
+    def schedule_check(self, _path):
+        self.retries = 0
+        self.timer.start()
 
     def scan(self, *, validate=False):
         files = sorted(path for path in self.source.glob('*') if path.suffix in ('.py', '.pyw'))
@@ -48,7 +53,14 @@ class LiveReload(QObject):
     def check(self):
         try:
             digest = self.scan(validate=True)
-        except (OSError, SyntaxError, ValueError):
+        except OSError:
+            # An editor can still hold the file after its last notification.
+            if self.retries < 3:
+                self.retries += 1
+                self.timer.start()
             return
+        except (SyntaxError, ValueError):
+            return
+        self.retries = 0
         if digest != self.digest and (self.source / 'ciceron.pyw').is_file():
             self.restart.emit()

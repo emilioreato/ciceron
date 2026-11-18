@@ -41,6 +41,21 @@ with TemporaryDirectory() as temporary:
     module = load_module(temporary)
     app = module.QApplication([])
     app.setQuitOnLastWindowClosed(False)
+    from live_reload import LiveReload
+
+    sources = Path(temporary) / 'recarga'
+    sources.mkdir()
+    entry = sources / 'ciceron.pyw'
+    entry.write_text('pass\n', encoding='utf-8')
+    reload_check = LiveReload(sources, app)
+    restarted = Mock()
+    reload_check.restart.connect(restarted)
+    with patch.object(reload_check, 'scan', side_effect=[PermissionError(), 'nueva revisión']):
+        reload_check.check()
+        assert reload_check.timer.isActive()
+        QTest.qWait(850)
+        restarted.assert_called_once()
+    reload_check.deleteLater()
     with patch.object(Path, 'open', side_effect=[PermissionError(), Mock()]) as open_lock:
         with patch.object(module.time, 'sleep'):
             assert module.open_source_session(Path(temporary)) is not None
