@@ -106,7 +106,7 @@ with TemporaryDirectory() as temporary:
     center.open_center()
     center.dock.hide()
     assert not center.dock.isVisible()
-    center.count.clicked.emit()
+    QTest.mouseClick(center.count, module.Qt.MouseButton.LeftButton)
     app.processEvents()
     assert center.dock.isVisible()
     assert center.dock.panel is None and center.dock.pending_panel[0] == 'clock'
@@ -119,7 +119,7 @@ with TemporaryDirectory() as temporary:
     assert center.dock.panel.open_animation.duration() == 155
     assert center.dock.panel.open_animation.startValue() == .20
     assert center.dock.panel.open_animation.endValue() == 1.0
-    center.count.clicked.emit()
+    QTest.mouseClick(center.count, module.Qt.MouseButton.LeftButton)
     app.processEvents()
     assert center.dock.panel is None
 

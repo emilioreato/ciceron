@@ -366,6 +366,7 @@ class App:
         QApplication.instance().setProperty('pureGlass', pure)
         if self.dock is not None:
             self.dock.pure = pure
+            self.dock.theme_dark = self.window.dark
             self.dock.monochrome = monochrome
             self.dock.set_glass(self.window.glass)
             self.dock.motion_enabled = bool(self.cfg['dock_motion'])
@@ -633,6 +634,7 @@ class App:
             from edge_dock import EdgeDock
             self.dock = EdgeDock(icon(), self.toggle_settings_panel)
         self.dock.pure = bool(QApplication.instance().property('pureGlass'))
+        self.dock.theme_dark = self.window.dark
         self.dock.monochrome = self.window.monochrome
         self.refresh_dock()
         self.dock.set_glass(self.window.glass)
@@ -1085,8 +1087,6 @@ class App:
                                       QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes and self.save_library([entry for entry in self.apps if entry is not item]):
             self.remove_start_shortcut(item)
-    def edit_goal(self):
-        self.goal_dialog().exec()
 
     def goal_dialog(self, attached=False):
         d=GlassDialog(self.window, attached=attached); d.setWindowTitle('Timer'); d.resize(350,276)

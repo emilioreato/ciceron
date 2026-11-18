@@ -265,7 +265,7 @@ class AttachedPanel(QWidget):
         self.pending_geometry = None
         self.layer = DockOptics(self)
         self.layer.hide()
-        self.apply_glass_tone(True)
+        self.apply_glass_tone(not dock.theme_dark)
         outer = QVBoxLayout(self)
         margin = self.CONTENT_MARGIN
         outer.setContentsMargins(margin, margin, margin, margin)
@@ -369,9 +369,16 @@ class AttachedPanel(QWidget):
 
     def apply_glass_tone(self, light):
         from center_ui import clear_styles, stylesheet
-        self.dark = getattr(self.dock, 'pure', False) or not light
+        if light is None:
+            light = not self.dock.theme_dark
+        self.dark = self.dock.pure or (not self.dock.monochrome and not light)
         line = '255,255,255' if self.dark else '0,0,0'
         monochrome = bool(getattr(self.dock, 'monochrome', False))
+        ink = '#f5f6f8' if self.dark else '#202020'
+        muted = '#bdc1c9' if self.dark else '#656565'
+        menu = '#292b30' if self.dark else '#ffffff'
+        fill = 'rgba(65,68,75,175)' if self.dark else ('#ffffff' if monochrome else 'rgba(247,248,250,185)')
+        hover = '#51545c' if self.dark else '#e7e9ed'
         self.setStyleSheet(stylesheet(self.dark, False, monochrome=monochrome,
                                       neutral=not monochrome) + f'''
             QWidget#dockContent, QDialog#dockContent, QWidget#attachedViewport {{ background: transparent; }}
@@ -380,13 +387,13 @@ class AttachedPanel(QWidget):
             }}
             QWidget#dockPanel QPushButton, QWidget#dockPanel QPlainTextEdit, QWidget#dockPanel QLineEdit,
             QWidget#dockPanel QComboBox, QWidget#dockPanel QDateEdit, QWidget#dockPanel QTimeEdit {{
-                background: white; color: #202020; border: 1px solid transparent; border-radius: 9px;
-                placeholder-text-color: #656565;
+                background: {fill}; color: {ink}; border: 1px solid transparent; border-radius: 9px;
+                placeholder-text-color: {muted};
             }}
             QWidget#dockPanel QPushButton {{ padding: 5px 10px; }}
             QWidget#dockPanel QPushButton#quiet {{ background: transparent; color: {'white' if self.dark else '#202020'}; }}
             QWidget#dockPanel QPushButton:hover, QWidget#dockPanel QPushButton:checked {{
-                background: #fff; border-color: #a0a0a0;
+                background: {hover}; border-color: transparent;
             }}
             QWidget#dockPanel QFrame#centerTabs {{
                 background: rgba({line},24); border: 1px solid rgba({line},46); border-radius: 13px;
@@ -396,7 +403,7 @@ class AttachedPanel(QWidget):
                 border-color: transparent; color: {'white' if self.dark else '#202020'};
             }}
             QWidget#dockPanel QFrame#centerTabs QPushButton#nav:hover {{ background: rgba({line},26); }}
-            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:checked {{ background: white; color: #202020; }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:checked {{ background: {fill}; color: {ink}; }}
             QWidget#dockPanel QFrame#centerTabs QPushButton#nav:focus {{ border-color: #737373; }}
             QWidget#dockPanel QPushButton#advancedToggle {{ padding: 4px 9px; }}
             QWidget#dockPanel QPushButton#effectSwitch {{
@@ -406,9 +413,9 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QLineEdit:focus, QWidget#dockPanel QPlainTextEdit:focus {{
                 border-color: #737373;
             }}
-            QWidget#dockPanel QPushButton#primary {{ background: white; color: #202020; font-weight: 700; }}
+            QWidget#dockPanel QPushButton#primary {{ background: {fill}; color: {ink}; font-weight: 700; }}
             QWidget#dockPanel QComboBox QAbstractItemView {{
-                background: white; color: #202020; selection-background-color: #e9e9e9; selection-color: #202020;
+                background: {menu}; color: {ink}; selection-background-color: {hover}; selection-color: {ink};
             }}
             QWidget#dockPanel QScrollBar:vertical {{ width: 6px; }}
             QWidget#dockPanel QScrollBar::handle:vertical {{ background: rgba({line},88); }}
@@ -468,6 +475,8 @@ class AttachedPanel(QWidget):
             self.using_glass = False
             self.layer.hide()
             self.layer.frame = None
+            self.layer.light = None
+            self.apply_glass_tone(None)
             self.update()
         return enabled
 
@@ -579,6 +588,7 @@ class EdgeDock(QWidget):
         self.handle.clicked.connect(self.reveal)
         self.using_glass = False
         self.glass_enabled = True
+        self.theme_dark = False
         self.monochrome = False
         self.pure = False
         self.motion_enabled = True
@@ -982,8 +992,7 @@ class EdgeDock(QWidget):
         self.position_panel(self.panel)
         self.panel.content.show()
         live = self.backdrop is not None
-        if live and self.layer.light is not None:
-            self.panel.apply_glass_tone(self.layer.light)
+        self.panel.apply_glass_tone(self.layer.light if live else None)
         if not persistent:
             self.panel.fit_content()
         self.panel.layer.setVisible(live)

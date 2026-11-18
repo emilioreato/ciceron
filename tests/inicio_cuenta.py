@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
     action(d)
    except Exception as e:
     errors.append(repr(e)); d.reject()
-  m.QTimer.singleShot(50,use); c.edit_goal(); assert not errors,errors
+  m.QTimer.singleShot(50,use); c.goal_dialog().exec(); assert not errors,errors
  def start(d, date, hour=None):
   d.findChild(m.QDateEdit).setDate(QDate(*date)); chk=next(x for x in d.findChildren(m.QCheckBox) if x.text()=='Elegir una hora')
   chk.setChecked(hour is not None)
