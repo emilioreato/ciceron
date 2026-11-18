@@ -275,6 +275,13 @@ with TemporaryDirectory() as temporary:
     assert center.dock.pure and center.window.glass and center.pages is pages
     assert pages.currentWidget() is active_page and center.dock.panel.content is center.window
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v3'
+    chooser.setCurrentIndex(chooser.findData('v1'))
+    app.processEvents()
+    app.processEvents()
+    assert not app.closingDown()
+    assert center.window.monochrome and center.window.isVisible()
+    assert center.dock.panel.key == 'settings' and center.dock.panel.content is center.window
+    assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
     chooser.setCurrentIndex(chooser.findData('v2'))
     app.processEvents()
     assert not center.dock.pure
@@ -309,12 +316,34 @@ with TemporaryDirectory() as temporary:
     assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
     frame = dock.grab().toImage()
     assert frame.pixelColor(frame.width() - 1, round(edge.y() * frame.devicePixelRatio())).alpha() == 1
-    ratio = frame.devicePixelRatio()
-    tab = dock.handle.geometry().center()
-    plate = frame.pixelColor(round(tab.x() * ratio), round((tab.y() - 10) * ratio))
-    assert plate.alpha() > 200 and plate.blue() == plate.red()
-    border = frame.pixelColor(round((dock.handle.x() + 3) * ratio), round(tab.y() * ratio))
-    assert border.lightness() > plate.lightness() + 40
+    handle_images = []
+    for monochrome, pure in ((True, False), (False, False), (False, True)):
+        dock.monochrome, dock.pure, dock.theme_dark = monochrome, pure, False
+        dock.layer.light = None
+        dock.handle.update()
+        handle_images.append(dock.grab().toImage())
+    handle = handle_images[0]
+    ratio = handle.devicePixelRatio()
+    handle_rect = dock.handle.geometry()
+    left, top = round(handle_rect.left() * ratio), round(handle_rect.top() * ratio)
+    width, height = round(handle_rect.width() * ratio), round(handle_rect.height() * ratio)
+    points = [(x, y) for y in range(height) for x in range(width)
+              if handle.pixelColor(left + x, top + y).alpha() > 64]
+    assert points
+    xs, ys = [point[0] for point in points], [point[1] for point in points]
+    assert (max(xs) - min(xs) + 1) / ratio < 8
+    assert (max(ys) - min(ys) + 1) / ratio < 12
+    assert all(image.size() == handle.size() and all(
+        image.pixelColor(left + x, top + y) == handle.pixelColor(left + x, top + y)
+        for y in range(height) for x in range(width))
+               for image in handle_images[1:])
+    assert max(handle.pixelColor(left + x, top + y).lightness() for x, y in points) < 100
+    dock.theme_dark = True
+    dark_handle = dock.grab().toImage()
+    assert [dark_handle.pixelColor(left + x, top + y).alpha() for y in range(height)
+            for x in range(width)] == [handle.pixelColor(left + x, top + y).alpha()
+                                       for y in range(height) for x in range(width)]
+    assert min(dark_handle.pixelColor(left + x, top + y).lightness() for x, y in points) > 180
     with patch('edge_dock.QCursor') as cursor:
         cursor.pos.return_value = dock.mapToGlobal(edge)
         dock.reveal()

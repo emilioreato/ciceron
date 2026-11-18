@@ -100,6 +100,8 @@ class DockIcon(QToolButton):
 
 
 class DockHandle(QToolButton):
+    ARROW_RIGHT_INSET = 4
+
     def contextMenuEvent(self, event):
         dock = self.parentWidget()
         menu = QMenu(self)
@@ -118,15 +120,15 @@ class DockHandle(QToolButton):
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        tab = QRectF(self.rect()).adjusted(3, 3, -3, -3)
-        painter.setPen(QPen(QColor(188, 188, 188, 162), 1))
-        painter.setBrush(QColor(40, 40, 40, 223))
-        painter.drawRoundedRect(tab, 8, 8)
-        center = tab.center()
-        arrow = QPainterPath(center + QPointF(2, -4))
+        center = QPointF(self.width() - self.ARROW_RIGHT_INSET, self.height() / 2)
+        arrow = QPainterPath(center + QPointF(1.5, -4))
         arrow.lineTo(center + QPointF(-2, 0))
-        arrow.lineTo(center + QPointF(2, 4))
-        painter.setPen(QPen(QColor('#eff0f2'), 1.7, Qt.PenStyle.SolidLine,
+        arrow.lineTo(center + QPointF(1.5, 4))
+        light_background = dock.layer.light
+        if light_background is None:
+            light_background = not dock.theme_dark
+        ink = QColor('#343434' if light_background else '#f0f0f0')
+        painter.setPen(QPen(ink, 1.8, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.drawPath(arrow)
 
@@ -578,7 +580,7 @@ class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 4
-    PANEL_GAP = 1
+    PANEL_GAP = 10
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
@@ -776,9 +778,12 @@ class EdgeDock(QWidget):
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
+        self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.animation.isActive():
-            self.leave_at = time.monotonic() + self.HIDE_DELAY
             self.animation.setInterval(16)
+        elif (self.progress > 0 or self.transition_to > 0 or self.panel is not None or
+              self.pending_panel is not None):
+            self.animation.start(16)
 
     def reveal(self):
         self.glass_idle_timer.stop()
@@ -834,6 +839,8 @@ class EdgeDock(QWidget):
             interval = 10 if self.progress != target or waiting_to_hide else 45
             if self.animation.interval() != interval:
                 self.animation.setInterval(interval)
+            if not self.animation.isActive():
+                self.animation.start(interval)
         if (self.pending_panel is not None and self.progress >= 1.0 and
                 not self.pending_open_scheduled):
             self.pending_open_scheduled = True

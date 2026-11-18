@@ -403,7 +403,7 @@ class App:
         menu.addSeparator()
         self.photo_timer = QTimer(self.window)
         self.photo_timer.setSingleShot(True)
-        self.photo_timer.timeout.connect(lambda: self.set_capture_mode(False))
+        self.photo_timer.timeout.connect(self.finish_photo_mode)
         self.photo_action = menu.addAction('Captura de pantalla · 20 segundos', self.start_photo_mode)
         menu.addSeparator()
         menu.addAction('Salir', QApplication.quit)
@@ -825,8 +825,16 @@ class App:
         self.apply_appearance()
 
     def switch_ui(self):
+        dock = self.dock
+        reopen_settings = (dock is not None and dock.panel is not None and
+                           dock.panel.key == 'settings' and dock.panel.content is self.window)
+        if reopen_settings:
+            dock.panel.close()
+            self.window.hide()
         self.apply_appearance()
         self.show_edge_dock()
+        if reopen_settings:
+            dock.toggle_panel('settings', lambda: self.window, persistent=True)
 
     def select_page(self, key):
         index = self.page_ids[key]
@@ -896,7 +904,7 @@ class App:
         self.dock_visibility_action.setEnabled(True)
         self.dock_visibility_action.setText(
             'Ocultar barra lateral' if dock_visible else 'Mostrar barra lateral')
-        self.photo_action.setEnabled(self.window.glass and bool(self.cfg['include_in_captures']))
+        self.photo_action.setEnabled(self.window.glass)
 
     def toggle_edge_dock_visibility(self):
         if self.dock is not None and self.dock.isVisible():
@@ -1241,14 +1249,22 @@ class App:
     def update_capture_preference(self):
         allowed = bool(self.cfg['include_in_captures'])
         self.capture_control.setEnabled(not self.window.monochrome)
-        self.capture_privacy.set_private(not self.window.monochrome and not allowed)
-        if capture_mode() and (not allowed or not self.window.glass):
+        if capture_mode() and not self.window.glass:
             self.set_capture_mode(False)
+        photo_override = (hasattr(self, 'photo_timer') and self.photo_timer.isActive() and
+                          capture_mode() and self.window.glass)
+        self.capture_privacy.set_private(
+            not self.window.monochrome and not allowed and not photo_override)
 
     def start_photo_mode(self):
-        if self.window.glass and self.cfg['include_in_captures']:
+        if self.window.glass:
             self.set_capture_mode(True)
             self.photo_timer.start(20000)
+            self.update_capture_preference()
+
+    def finish_photo_mode(self):
+        self.set_capture_mode(False)
+        self.update_capture_preference()
 
     def set_capture_mode(self, mode):
         self.photo_timer.stop()
@@ -1411,7 +1427,9 @@ class App:
         t=target(self.cfg); date=QDateEdit(); date.setAccessibleName('Fecha'); date.setDisplayFormat('dd-MM-yyyy'); date.setDate(QDate(t.year,t.month,t.day) if t else QDate.currentDate())
         date.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         date.setFixedHeight(36)
-        date.lineEdit().setStyleSheet('background: transparent; border: 0; padding: 0;')
+        editor_ink = '#f7f7f7' if d.dark else '#202020'
+        editor_style = f'background: transparent; border: 0; padding: 0; color: {editor_ink};'
+        date.lineEdit().setStyleSheet(editor_style)
         date_field = QFrame()
         date_row = QHBoxLayout(date_field)
         date_row.setContentsMargins(0, 0, 0, 0)
@@ -1475,7 +1493,7 @@ class App:
         time_row=QHBoxLayout(); use_time=ClearCheckBox('Elegir una hora'); use_time.setChecked(bool(t and (t.hour,t.minute)!=(0,0)))
         clock=QTimeEdit(); clock.setDisplayFormat('HH:mm'); clock.setTime(QTime(t.hour,t.minute) if t else QTime(0,0)); clock.setEnabled(use_time.isChecked()); clock.setMaximumWidth(108)
         clock.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        clock.lineEdit().setStyleSheet('background: transparent; border: 0; padding: 0;')
+        clock.lineEdit().setStyleSheet(editor_style)
         clock.setAccessibleName('Hora')
         use_time.setToolTip('Si dejas la hora desactivada, la fecha vence a las 00:00.')
         chosen_time=[QTime(clock.time())]
