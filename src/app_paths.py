@@ -1,45 +1,44 @@
 """Portable paths for Cicerón's code, extension and user data."""
 import os
 import sys
+from hashlib import sha256
 from pathlib import Path
+
+
+def development_mode():
+    return not getattr(sys, 'frozen', False) and os.environ.get('CICERON_DEV', '1') == '1'
 
 
 def application_root():
     """Return the folder containing this installation, independent of drive letter."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
     configured = os.environ.get('CICERON_HOME')
     if configured:
         return Path(configured).expanduser().resolve()
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1] / 'Aplicacion'
+    return Path(__file__).resolve().parents[1] / ('.desarrollo' if development_mode() else 'Aplicacion')
 
 
 def data_root():
     """Keep mutable settings and packages beside the portable installation."""
     configured = os.environ.get('CICERON_DATA')
-    if configured:
+    if configured and not getattr(sys, 'frozen', False):
         return Path(configured).expanduser().resolve()
     return application_root() / 'datos'
+
+
+def instance_suffix():
+    if development_mode():
+        key = os.path.normcase(str(data_root())).encode('utf-8')
+        return '_Dev_' + sha256(key).hexdigest()[:24]
+    return ''
 
 
 def resolve_app_path(value):
     """Resolve a stored app path; relative values are confined to this app root."""
     path = Path(value).expanduser()
     if path.is_absolute():
-        resolved = path.resolve()
-        if resolved.is_file():
-            return resolved
-        # Older library entries may contain an absolute path from before the
-        # whole Aplicacion folder was moved. Rebase only when the same file is
-        # present under the current portable root.
-        parts = resolved.parts
-        for index in range(len(parts) - 2, -1, -1):
-            if parts[index].casefold() == 'aplicacion':
-                candidate = (application_root() / Path(*parts[index + 1:])).resolve()
-                if candidate.is_file():
-                    return candidate
-                break
-        return resolved
+        return path.resolve()
     root = application_root().resolve()
     resolved = (root / path).resolve()
     if not resolved.is_relative_to(root):

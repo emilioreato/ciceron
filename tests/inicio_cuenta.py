@@ -8,7 +8,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
  os.environ['APPDATA']=tmp
  os.environ['CICERON_HOME']=str(Path(tmp)/'Aplicacion')
  path=Path(__file__).resolve().parents[1] / 'src' / 'ciceron.pyw'; l=importlib.machinery.SourceFileLoader('ci',str(path)); s=importlib.util.spec_from_loader(l.name,l); m=importlib.util.module_from_spec(s); l.exec_module(m)
- m.write(m.CONFIG,dict(m.DEFAULT,show_timer=False,guardian=False,interval='inválido'))
+ m.write(m.CONFIG,dict(m.DEFAULT,show_timer=False,guardian=False,interval='inválido',theme='dark'))
  a=m.QApplication([]); a.setQuitOnLastWindowClosed(False); c=m.App(); notices=[]
  assert c.cfg['interval']==m.DEFAULT['interval']
  aware=m.dt.datetime.fromisoformat('2027-11-12T12:15+00:00')
@@ -37,8 +37,11 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
   QTest.keyClick(chk,Qt.Key.Key_Space); assert not chk.isChecked()
   button=next(x for x in d.findChildren(m.QPushButton) if x.text()=='Calendario')
   assert button.parentWidget() is d.findChild(m.QDateEdit).parentWidget()
+  button_frame=button.grab().toImage()
+  assert button_frame.pixelColor(8,button_frame.height()//2).lightness()<110
   button.click()
   picker=a.activePopupWidget(); assert picker is not None and picker.isVisible()
+  assert '#171e30' in picker.styleSheet()
   next(x for x in picker.findChildren(m.QPushButton) if x.text()=='Cerrar').click()
   assert not picker.isVisible() and d.isVisible()
   button.click()

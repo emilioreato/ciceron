@@ -1,11 +1,15 @@
 @echo off
 setlocal
 cd /d "%~dp0.."
-if not exist ".venv\Scripts\python.exe" (
+call "%~dp0preparar.bat" --comprobar >nul
+if errorlevel 1 (
   call "%~dp0preparar.bat"
   if errorlevel 1 goto error
 )
-".venv\Scripts\python.exe" src\ciceron.pyw
+set "CICERON_DEV=1"
+set "CICERON_HOME=%CD%\.desarrollo"
+set "CICERON_DATA="
+".venv\Scripts\python.exe" src\ciceron.pyw --abrir
 if errorlevel 1 goto error
 exit /b 0
 :error

@@ -1,7 +1,6 @@
-"""Compile the sample app and write a valid .ciceron package."""
+"""Package the sample's Python entry point without compiling it."""
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
@@ -15,15 +14,8 @@ def main():
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / '.salida/notas-ejemplo.ciceron'
     output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=output.parent, prefix='notas-') as temporary:
-        work = Path(temporary)
-        payload = work / 'contenido'
-        subprocess.run(
-            [sys.executable, '-m', 'PyInstaller', '--log-level', 'WARN', '--noconfirm',
-             '--windowed', '--onefile', '--name', 'Notas', '--distpath', str(payload),
-             '--workpath', str(work / 'build'), '--specpath', str(work), str(HERE / 'notas.pyw')],
-            check=True,
-        )
-        for filename in ('ciceron.json', 'icono.png'):
+        payload = Path(temporary)
+        for filename in ('ciceron.json', 'icono.png', 'notas.pyw'):
             shutil.copyfile(HERE / filename, payload / filename)
         create_package(payload, output)
     print(output)

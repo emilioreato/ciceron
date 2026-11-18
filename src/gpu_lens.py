@@ -101,8 +101,9 @@ void main() {
         vec3 color = texture2D(backdrop, coord, blur).rgb;
         float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
         color = glass_tone < 0.5
-            ? color * min(1.0, 0.41 / max(luma, 0.001))
-            : mix(color, vec3(1.0), max(0.0, (0.64 - luma) / max(1.0 - luma, 0.001)));
+            ? mix(color * min(1.0, 0.41 / max(luma, 0.001)), vec3(0.09, 0.18, 0.34), 0.24)
+            : mix(color, vec3(0.87, 0.92, 1.0),
+                  max(0.0, (0.64 - luma) / max(1.0 - luma, 0.001)) * smoothstep(0.10, 0.45, luma));
         if (bevel > 0.0) {
             vec3 edge_color = texture2D(backdrop, coord).rgb;
             float chroma = max(edge_color.r, max(edge_color.g, edge_color.b))

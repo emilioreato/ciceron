@@ -14,6 +14,22 @@ from PySide6.QtTest import QTest
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'src'))
+from windows_glass import energy_saver_active
+
+
+def power_on_battery(pointer):
+    status = pointer._obj
+    status.ac = 0
+    status.percentage = 45
+    status.saving = saving
+    return True
+
+
+with patch('windows_glass.get_power', side_effect=power_on_battery):
+    for saving in (0, 1):
+        assert energy_saver_active() == bool(saving)
+
+
 with TemporaryDirectory() as temporary:
     os.environ['APPDATA'] = os.environ['LOCALAPPDATA'] = temporary
     os.environ['CICERON_HOME'] = str(Path(temporary) / 'Aplicacion')
@@ -52,7 +68,11 @@ with TemporaryDirectory() as temporary:
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.open_center()
-    QTest.qWait(450)
+    for _ in range(30):
+        panel = center.dock.panel
+        if panel is not None and panel.windowOpacity() == 1.0:
+            break
+        QTest.qWait(40)
     assert center.dock.panel.key == 'settings'
     assert set(center.page_ids) == {'general', 'settings', 'status'}
     assert center.import_button.parentWidget() is center.banner
@@ -182,6 +202,10 @@ with TemporaryDirectory() as temporary:
     assert center.dock.geometry().right() == center.dock.screen.availableGeometry().right()
     assert center.dock.panel.geometry().x() < center.dock.geometry().x()
     assert center.dock.panel.geometry().right() <= center.dock.geometry().right()
+    panel = center.dock.panel
+    dock_left = center.dock.x() + center.dock.optic_rect().left()
+    panel_right = panel.x() + panel.optic_rect().right()
+    assert abs(dock_left - panel_right - center.dock.PANEL_GAP) <= 1
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
     center.open_center()
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
@@ -241,6 +265,10 @@ with TemporaryDirectory() as temporary:
     assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
     frame = dock.grab().toImage()
     assert frame.pixelColor(frame.width() - 1, round(edge.y() * frame.devicePixelRatio())).alpha() == 1
+    ratio = frame.devicePixelRatio()
+    tab = dock.handle.geometry().center()
+    plate = frame.pixelColor(round(tab.x() * ratio), round((tab.y() - 10) * ratio))
+    assert plate.alpha() > 200 and plate.blue() > plate.red()
     with patch('edge_dock.QCursor') as cursor:
         cursor.pos.return_value = dock.mapToGlobal(edge)
         dock.reveal()

@@ -6,7 +6,7 @@ try {
     $python = (Resolve-Path -LiteralPath '.venv/Scripts/python.exe').Path
     $failed = @()
     $env:QT_QPA_PLATFORM = 'offscreen'
-    foreach ($name in @('app_paths', 'inicio', 'inicio_cuenta', 'centro', 'paquetes', 'browser_bridge', 'browser_ui')) {
+    foreach ($name in @('app_paths', 'desarrollo', 'inicio', 'inicio_cuenta', 'centro', 'paquetes', 'datos', 'browser_bridge', 'browser_ui')) {
         & $python "tests/$name.py"
         if ($LASTEXITCODE -ne 0) { $failed += $name }
     }
@@ -20,7 +20,7 @@ try {
         }
     }
     if ($Instalacion) {
-        foreach ($name in @('instalacion', 'navegador_instalacion')) {
+        foreach ($name in @('instalacion', 'navegador_instalacion', 'portabilidad')) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests/$name.ps1"
             if ($LASTEXITCODE -ne 0) { $failed += $name }
         }

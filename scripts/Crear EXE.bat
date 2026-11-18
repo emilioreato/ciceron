@@ -1,7 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0.."
-if not exist ".venv\Scripts\python.exe" (
+call "%~dp0preparar.bat" --comprobar >nul
+if errorlevel 1 (
     call "%~dp0preparar.bat"
     if errorlevel 1 goto error
 )

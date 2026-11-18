@@ -4,7 +4,7 @@ import re
 import os
 from pathlib import Path
 import winreg
-from app_paths import application_root
+from app_paths import application_root, development_mode
 
 HOST='com.ciceron.browser'
 ORIGIN='chrome-extension://cmbcmfhajdjlcepmkhjnfooadbccljpk/'
@@ -27,6 +27,8 @@ def detected():
     return result
 
 def prepare(browser):
+    if development_mode():
+        raise ValueError('El perfil de desarrollo no modifica el registro del navegador.')
     if browser not in KEYS: raise ValueError('Navegador no compatible.')
     root=application_root()
     manifest=root/'ciceron-native-host.json'

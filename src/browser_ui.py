@@ -7,7 +7,7 @@ import sys
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
     QPlainTextEdit,QMessageBox,QInputDialog,QLineEdit,QCheckBox,QWidget)
-from app_paths import application_root
+from app_paths import application_root, development_mode
 import browser_bridge as bridge
 from center_ui import GlassDialog
 
@@ -78,6 +78,7 @@ class BrowserDialog(GlassDialog):
         options.addLayout(row)
         row = QHBoxLayout()
         install = QPushButton('Preparar navegador')
+        install.setEnabled(not development_mode())
         install.clicked.connect(self.prepare_browser)
         row.addWidget(install)
         folder = QPushButton('Ver extensión')

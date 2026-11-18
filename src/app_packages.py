@@ -27,6 +27,71 @@ VERSION = re.compile(r'(?:0|[1-9][0-9]{0,5})(?:\.(?:0|[1-9][0-9]{0,5})){2}', re.
 DIRNAME = re.compile(r'[0-9a-f]{64}')
 RESERVED = re.compile(r'con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$', re.I)
 SIZE_LIMIT = 1024 ** 3
+PYTHON_VERSION = '3.12'
+
+_kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+_kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                               ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+_kernel.CreateFileW.restype = ctypes.c_void_p
+_kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+
+
+def python_entrypoint(entry):
+    return Path(entry).suffix.lower() in ('.py', '.pyw')
+
+
+def python_command(entry, environment):
+    try:
+        if not getattr(sys, 'frozen', False) and sys.version_info[:2] == (3, 12):
+            interpreter = Path(sys.executable)
+        else:
+            launcher = shutil.which('py.exe')
+            if launcher is None:
+                raise FileNotFoundError('py.exe')
+            result = subprocess.run(
+                [launcher, '-3.12', '-I', '-c',
+                 'import sys; assert sys.version_info[:2] == (3, 12); sys.stdout.buffer.write(sys.executable.encode("utf-8"))'],
+                env=environment, capture_output=True, check=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            interpreter = Path(result.stdout.decode('utf-8'))
+        if Path(entry).suffix.lower() == '.pyw':
+            interpreter = interpreter.with_name('pythonw.exe')
+        if not interpreter.is_absolute() or not interpreter.is_file():
+            raise FileNotFoundError(interpreter)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise PackageError('Esta miniapp necesita Python 3.12 para Windows y su lanzador py. '
+                           'Comprueba que «py -3.12 --version» funcione y vuelve a abrirla.') from error
+    return [str(interpreter), '-E', '-s', '-B', str(entry)]
+
+
+def portable_data_path(name):
+    if not isinstance(name, str) or len(name) > 512:
+        raise PackageError('Cada ruta de datos debe ser relativa y tener hasta 512 caracteres.')
+    path = package_path(name)
+    parts = path.casefold().split('/')
+    if ('settings.json' in parts or
+            set(parts) & {'cache', 'caches', '.cache', '__pycache__', 'logs', 'tmp', 'temp'} or
+            Path(parts[-1]).suffix in {'.exe', '.dll', '.pyd', '.py', '.pyw', '.pyc', '.bat', '.cmd',
+                                       '.ps1', '.msi', '.com', '.scr', '.lnk', '.reg', '.log', '.tmp',
+                                       '.js', '.vbs', '.jar', '.sqlite-wal', '.sqlite-shm'}):
+        raise PackageError(f'Este archivo no puede declararse como dato portable: {name}')
+    return path
+
+
+def data_contract(value):
+    object_keys(value, 'version files', 'datos portables')
+    version, files = value.get('version'), value.get('files')
+    if type(version) is not int or not 1 <= version <= 1000000:
+        raise PackageError('La versión de los datos debe ser un entero positivo.')
+    if not isinstance(files, list) or len(files) > 256:
+        raise PackageError('Declara hasta 256 archivos de datos portables.')
+    seen = set()
+    for name in files:
+        key = portable_data_path(name).casefold()
+        if key in seen or any(key.startswith(other + '/') or other.startswith(key + '/') for other in seen):
+            raise PackageError('Las rutas de datos declaradas se solapan.')
+        seen.add(key)
+    return value
 
 
 def package_path(name):
@@ -74,7 +139,7 @@ def valid_setting(spec, value):
 
 
 def manifest(data):
-    object_keys(data, 'schema id version name description entrypoint args icon dock settings tags', MANIFEST)
+    object_keys(data, 'schema id version name description entrypoint args icon dock settings tags python data', MANIFEST)
     if type(data.get('schema')) is not int or data['schema'] != 1:
         raise PackageError('Se requiere schema 1.')
     if not short_text(data.get('id'), 80) or not APP_ID.fullmatch(data['id']):
@@ -88,8 +153,15 @@ def manifest(data):
     if description != '' and not short_text(description, 240):
         raise PackageError('Descripción inválida.')
     entry = data.get('entrypoint')
-    if not isinstance(entry, str) or not package_path(entry).lower().endswith('.exe'):
-        raise PackageError('Indica un ejecutable .exe en entrypoint.')
+    if not isinstance(entry, str) or not package_path(entry).lower().endswith(('.exe', '.py', '.pyw')):
+        raise PackageError('Indica un archivo .exe, .py o .pyw en entrypoint.')
+    if python_entrypoint(entry):
+        if data.get('python') != PYTHON_VERSION:
+            raise PackageError('Un punto de entrada Python requiere «python»: «3.12».')
+    elif 'python' in data:
+        raise PackageError('El campo python solo se usa con .py y .pyw.')
+    if 'data' in data:
+        data_contract(data['data'])
     icon = data.get('icon')
     if icon is not None and (not isinstance(icon, str) or not package_path(icon).lower().endswith(('.png', '.ico'))):
         raise PackageError('El icono debe ser un archivo PNG o ICO del paquete.')
@@ -105,11 +177,13 @@ def manifest(data):
         raise PackageError('Se admiten hasta 24 ajustes.')
     keys = set()
     for spec in settings:
-        object_keys(spec, 'id label type default min max choices', 'ajuste')
+        object_keys(spec, 'id label type default min max choices portable', 'ajuste')
         key = spec.get('id')
         if not isinstance(key, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,39}', key) or key in keys:
             raise PackageError('Cada ajuste necesita un id único en minúsculas.')
         keys.add(key)
+        if type(spec.get('portable', True)) is not bool:
+            raise PackageError(f'El indicador portable de {key} debe ser booleano.')
         if not short_text(spec.get('label'), 80) or spec.get('type') not in ('boolean', 'integer', 'choice', 'text'):
             raise PackageError(f'Tipo o etiqueta inválidos en {key}.')
         if spec['type'] == 'integer' and not (
@@ -128,7 +202,7 @@ def manifest(data):
                 settings=settings, tags=app_tags(data.get('tags', [])))
 
 
-def zip_entries(archive):
+def zip_entries(archive, manifest_name=MANIFEST):
     paths, files, total = {}, {}, 0
     items = archive.infolist()
     if len(items) > 12000:
@@ -155,8 +229,8 @@ def zip_entries(archive):
             parent = '/'.join(parts[:length])
             if prefixes.setdefault(parent.casefold(), (parent, True)) != (parent, True):
                 raise PackageError(f'Conflicto entre rutas del paquete: {parent}')
-    if MANIFEST not in files or files[MANIFEST].file_size > 65536:
-        raise PackageError(f'Se necesita {MANIFEST} en la raíz, de hasta 64 KiB.')
+    if manifest_name not in files or files[manifest_name].file_size > 65536:
+        raise PackageError(f'Se necesita {manifest_name} en la raíz, de hasta 64 KiB.')
     return files
 
 
@@ -167,7 +241,7 @@ def unpack_package(path, destination=None):
             files = zip_entries(archive)
             spec = manifest(json.loads(archive.read(files.pop(MANIFEST)).decode('utf-8')))
             if spec['entrypoint'] not in files:
-                raise PackageError('El ejecutable declarado no está en el paquete.')
+                raise PackageError('El punto de entrada declarado no está en el paquete.')
             if spec['icon'] and (spec['icon'] not in files or files[spec['icon']].file_size > 2 * 1024 ** 2):
                 raise PackageError('El icono declarado debe estar en el paquete y pesar hasta 2 MiB.')
             fingerprint = hashlib.sha256(json.dumps(spec, ensure_ascii=False, sort_keys=True).encode('utf-8'))
@@ -385,6 +459,23 @@ class PackageStore:
     def data_folder(self, spec):
         return self.data / spec['id']
 
+    @contextmanager
+    def data_lease(self, app_id, *, exclusive):
+        """A child inherits the open handle, so closing Cicerón does not unlock a running app."""
+        locks = self.root / 'datos-en-uso'
+        locks.mkdir(parents=True, exist_ok=True)
+        handle = _kernel.CreateFileW(str(locks / (app_id + '.lock')), 0x80000000,
+                                     0 if exclusive else 1, None, 4, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            error = ctypes.get_last_error()
+            if error in (32, 33):
+                raise PackageError(f'Cierra {app_id} antes de trasladar sus datos.') from ctypes.WinError(error)
+            raise ctypes.WinError(error)
+        try:
+            yield handle
+        finally:
+            _kernel.CloseHandle(handle)
+
     def settings(self, spec):
         stored = json_object(self.data_folder(spec) / 'settings.json')
         for field in spec['settings']:
@@ -394,13 +485,14 @@ class PackageStore:
         return stored
 
     def save_settings(self, spec, values):
-        stored = self.settings(spec)
-        fields = {field['id']: field for field in spec['settings']}
-        for key, value in values.items():
-            if key not in fields or not valid_setting(fields[key], value):
-                raise PackageError(f'Valor inválido para {key}.')
-            stored[key] = value
-        atomic_json(self.data_folder(spec) / 'settings.json', stored)
+        with self.data_lease(spec['id'], exclusive=False):
+            stored = self.settings(spec)
+            fields = {field['id']: field for field in spec['settings']}
+            for key, value in values.items():
+                if key not in fields or not valid_setting(fields[key], value):
+                    raise PackageError(f'Valor inválido para {key}.')
+                stored[key] = value
+            atomic_json(self.data_folder(spec) / 'settings.json', stored)
 
     def launch(self, item):
         spec = item['package']
@@ -411,14 +503,22 @@ class PackageStore:
         if not executable.is_file():
             raise PackageError('Falta el ejecutable. Vuelve a importar el paquete.')
         data = self.data_folder(spec).resolve()
-        self.save_settings(spec, {})
+        if not data.is_relative_to(self.data.resolve()):
+            raise PackageError('La carpeta de datos apunta fuera de Cicerón.')
         environment = dict(os.environ, CICERON_APP_ID=spec['id'], CICERON_APP_DATA=str(data),
                            CICERON_APP_SETTINGS=str(data / 'settings.json'), PYINSTALLER_RESET_ENVIRONMENT='1')
         frozen = getattr(sys, 'frozen', False)
         if frozen:
             ctypes.windll.kernel32.SetDllDirectoryW(None)
         try:
-            process = subprocess.Popen([str(executable), *spec['args']], cwd=root, env=environment)
+            command = (python_command(executable, environment) if python_entrypoint(executable)
+                       else [str(executable)])
+            with self.data_lease(spec['id'], exclusive=False) as lease:
+                self.save_settings(spec, {})
+                os.set_handle_inheritable(lease, True)
+                startup = subprocess.STARTUPINFO(lpAttributeList={'handle_list': [lease]})
+                process = subprocess.Popen([*command, *spec['args']], cwd=root, env=environment,
+                                           startupinfo=startup, close_fds=True)
             running = [proc for proc in self.running.get(root, ()) if proc.poll() is None]
             self.running[root] = [*running, process]
             return process

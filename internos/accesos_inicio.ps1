@@ -79,3 +79,42 @@ function Write-CiceronToolShortcut($shell, [string]$directory, [string]$destinat
         if (Test-Path -LiteralPath $stageLink) { Remove-Item -LiteralPath $stageLink -Force }
     }
 }
+
+function Repair-CiceronLibraryShortcuts($shell, [string]$menu, [string]$oldRoot, [string]$newRoot) {
+    if (!$oldRoot -or $oldRoot -eq $newRoot) { return }
+    $directory = Get-Item -LiteralPath (Join-Path $menu 'Ciceron') -ErrorAction SilentlyContinue
+    if (!$directory -or !$directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $prefix = $oldRoot.TrimEnd('\') + '\'
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($item in Get-ChildItem -LiteralPath $directory.FullName -Filter '*.lnk' -File) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            $link = $shell.CreateShortcut($item.FullName)
+            if ($link.Description -cnotmatch '^Ciceron\.Library:([0-9a-f]{16}) ') { continue }
+            $marker = $Matches[1]
+            if (!$link.TargetPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $relative = $link.TargetPath.Substring($prefix.Length)
+            if ($relative -ieq 'Ciceron.exe' -and $link.Arguments -cmatch '^--lanzar-paquete ([a-z0-9.-]{1,80})$') {
+                $id = $Matches[1]
+            } elseif (!$link.Arguments) {
+                $id = 'portable:' + $relative.Replace('\','/').ToLowerInvariant()
+            } else { continue }
+            $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($id))).Replace('-','').ToLowerInvariant()
+            if (!$hash.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
+            $newTarget = Join-Path $newRoot $relative
+            if (!(Test-Path -LiteralPath $newTarget -PathType Leaf)) { continue }
+            $newWorkingDirectory = $link.WorkingDirectory
+            if ($newWorkingDirectory.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) {
+                $newWorkingDirectory = Join-Path $newRoot ($newWorkingDirectory.Substring($prefix.Length))
+            } elseif ($newWorkingDirectory -eq $oldRoot) { $newWorkingDirectory = $newRoot }
+            $newIcon = $link.IconLocation
+            if ($newIcon.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) {
+                $newIcon = Join-Path $newRoot ($newIcon.Substring($prefix.Length))
+            }
+            $link.TargetPath = $newTarget
+            $link.WorkingDirectory = $newWorkingDirectory
+            $link.IconLocation = $newIcon
+            $link.Save()
+        }
+    } finally { $sha.Dispose() }
+}

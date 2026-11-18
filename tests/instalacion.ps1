@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Join-Path $PSScriptRoot '.instalacion-temporal'
 $expected = Join-Path $PSScriptRoot '.instalacion-temporal'
 $key = 'HKCU:\Software\CiceronPruebaCodex_Instalacion'

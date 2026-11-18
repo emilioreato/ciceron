@@ -1,4 +1,6 @@
 .venv/
+/.venv-anterior-*/
+/.desarrollo/
 .salida/
 .compilacion/
 __pycache__/
@@ -11,5 +13,6 @@ navegador/extension/_metadata/
 /internos/*.exe
 /internos/Ciceron/
 /tests/.*-temporal/
+/tests/.datos con espacios */
 .env
 .env.*

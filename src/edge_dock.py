@@ -16,8 +16,8 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QScrollArea, QStacke
 
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
-from windows_glass import (client_bounds, foreground_window, forward_wheel,
-                           is_external_window, on_ac_power, root_window, set_affinity, window_belongs_to)
+from windows_glass import (client_bounds, energy_saver_active, foreground_window, forward_wheel,
+                           is_external_window, root_window, set_affinity, window_belongs_to)
 
 
 def tool_icon(name):
@@ -95,8 +95,6 @@ class DockIcon(QToolButton):
 
 
 class DockHandle(QToolButton):
-    ARROW_RIGHT_INSET = 6
-
     def contextMenuEvent(self, event):
         dock = self.parentWidget()
         menu = QMenu(self)
@@ -115,15 +113,17 @@ class DockHandle(QToolButton):
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        middle = QPointF(self.width() - self.ARROW_RIGHT_INSET, self.height() / 2)
-        left = middle + QPointF(-2, 0)
-        arrow = QPainterPath(middle + QPointF(1.5, -4))
-        arrow.lineTo(left)
-        arrow.lineTo(middle + QPointF(1.5, 4))
-        for color, width in ((QColor(17, 21, 28, 200), 3.4), (QColor('#eef2f6'), 1.55)):
-            painter.setPen(QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
-                                Qt.PenJoinStyle.RoundJoin))
-            painter.drawPath(arrow)
+        tab = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        painter.setPen(QPen(QColor(170, 192, 228, 162), 1))
+        painter.setBrush(QColor(29, 41, 62, 223))
+        painter.drawRoundedRect(tab, 8, 8)
+        center = tab.center()
+        arrow = QPainterPath(center + QPointF(2, -4))
+        arrow.lineTo(center + QPointF(-2, 0))
+        arrow.lineTo(center + QPointF(2, 4))
+        painter.setPen(QPen(QColor('#eff5ff'), 1.7, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(arrow)
 
 
 class DockOptics(QOpenGLWidget):
@@ -377,10 +377,15 @@ class AttachedPanel(QWidget):
         ink = '#f5f6f8' if self.dark else '#202020'
         muted = '#bdc1c9' if self.dark else '#656565'
         menu = '#292b30' if self.dark else '#ffffff'
-        fill = 'rgba(65,68,75,175)' if self.dark else ('#ffffff' if monochrome else 'rgba(247,248,250,185)')
-        hover = '#51545c' if self.dark else '#e7e9ed'
+        diffused = self.dock.glass_enabled and not self.dock.pure
+        if self.dark:
+            fill = 'rgba(46,62,89,175)' if diffused else 'rgba(65,68,75,175)'
+            hover = '#415779' if diffused else '#51545c'
+        else:
+            fill = '#ffffff' if monochrome else 'rgba(247,248,250,185)'
+            hover = '#e7edf8' if diffused else '#e7e9ed'
         self.setStyleSheet(stylesheet(self.dark, False, monochrome=monochrome,
-                                      neutral=not monochrome) + f'''
+                                      neutral=not monochrome and not diffused) + f'''
             QWidget#dockContent, QDialog#dockContent, QWidget#attachedViewport {{ background: transparent; }}
             QWidget#dockPanel QFrame#card, QWidget#dockPanel QFrame#timeCard {{
                 background: transparent; border: 0; border-radius: 12px;
@@ -460,8 +465,15 @@ class AttachedPanel(QWidget):
         if not self.using_glass:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor(33, 33, 33, 232) if self.dark else QColor(245, 245, 245, 232))
-            painter.setPen(QPen(QColor(255, 255, 255, 140), 1))
+            diffused = self.dock.glass_enabled and not self.dock.pure
+            if diffused:
+                base = QColor(23, 35, 59, 213) if self.dark else QColor(225, 235, 251, 213)
+                rim = QColor(168, 194, 236, 130)
+            else:
+                base = QColor(33, 33, 33, 232) if self.dark else QColor(245, 245, 245, 232)
+                rim = QColor(255, 255, 255, 140)
+            painter.setBrush(base)
+            painter.setPen(QPen(rim, 1))
             painter.drawRoundedRect(self.optic_rect(), self.CORNER_RADIUS, self.CORNER_RADIUS)
 
     def prepare_layer(self, enabled, photo=False):
@@ -557,6 +569,7 @@ class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 4
+    PANEL_GAP = 10
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
@@ -671,7 +684,7 @@ class EdgeDock(QWidget):
     def prepare_layer(self):
         if not self.isVisible():
             return
-        full = self.glass_enabled and on_ac_power()
+        full = self.glass_enabled and not energy_saver_active()
         if full and self.backdrop is None:
             self.layer.show()
             self.layer.lower()
@@ -714,6 +727,15 @@ class EdgeDock(QWidget):
         self.stop_capture()
         self.reset_to_handle()
         super().hideEvent(event)
+
+    def shutdown(self):
+        capture = self.backdrop
+        self.close()
+        if capture is not None:
+            capture.thread.join(timeout=2)
+        if self.panel_window is not None:
+            self.panel_window.deleteLater()
+            self.panel_window = None
 
     def reset_to_handle(self):
         self.animation.stop()
@@ -830,13 +852,15 @@ class EdgeDock(QWidget):
         rect = self.optic_rect()
         if self.glass_enabled:
             frost = QLinearGradient(rect.topLeft(), rect.topRight())
-            frost.setColorAt(0, QColor(255, 255, 255, round(138 - 150 * self.transparency)))
-            frost.setColorAt(1, QColor(246, 246, 246, round(75 - 100 * self.transparency)))
-            painter.setPen(QPen(QColor(255, 255, 255, 175), 1))
+            dark = self.theme_dark or self.pure
+            near, far = ((38, 55, 82), (20, 32, 52)) if dark else ((185, 206, 238), (151, 173, 210))
+            frost.setColorAt(0, QColor(*near, round(120 - 120 * self.transparency)))
+            frost.setColorAt(1, QColor(*far, round(76 - 90 * self.transparency)))
+            painter.setPen(QPen(QColor(177, 199, 234, 150), 1))
             painter.setBrush(frost)
         else:
-            painter.setPen(QPen(QColor('#a4a4a4'), 1))
-            painter.setBrush(QColor('#f7f7f7'))
+            painter.setPen(QPen(QColor('#69758b' if self.theme_dark else '#a4a4a4'), 1))
+            painter.setBrush(QColor('#222b3b' if self.theme_dark else '#f7f7f7'))
         radius = min(self.CORNER_RADIUS, rect.width() / 2)
         painter.drawRoundedRect(rect, radius, radius)
 
@@ -1013,7 +1037,7 @@ class EdgeDock(QWidget):
         area = self.screen.availableGeometry()
         anchors = dict(zip(('clock', 'browser', 'effects'), self.entries))
         anchor = anchors.get(panel.key, self.gear)
-        seam = self.x() + round(self.optic_rect().left()) + panel.INSET - 1
+        seam = self.x() + round(self.optic_rect().left()) + panel.INSET - self.PANEL_GAP
         available = seam - area.left()
         width = min(panel.width(), max(1, available))
         height = min(height, area.height() - 12)

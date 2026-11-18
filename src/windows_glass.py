@@ -102,7 +102,8 @@ class BackdropCapture:
         if pixels is None:
             return QImage()
         width, height = self.size
-        return QImage(pixels, width, height, width * 4, QImage.Format.Format_RGB32)
+        # Publish an image owned by Qt to consumers on the GUI thread.
+        return QImage(pixels, width, height, width * 4, QImage.Format.Format_RGB32).copy()
 
     def read_bgra(self, x, y, width, height, include_layered=False, reduced=False):
         if width < 1 or height < 1:
@@ -135,9 +136,9 @@ class PowerStatus(C.Structure):
 get_power = bind(kernel, 'GetSystemPowerStatus', W.BOOL, C.POINTER(PowerStatus))
 
 
-def on_ac_power():
+def energy_saver_active():
     status = PowerStatus()
-    return bool(get_power(C.byref(status)) and status.ac == 1)
+    return bool(get_power(C.byref(status)) and status.saving == 1)
 
 
 next_window = bind(user, 'GetWindow', W.HWND, W.HWND, W.UINT)

@@ -1,18 +1,32 @@
 # Desarrollo de Cicerón
 
-La aplicación actual está en `src/ciceron.pyw` y usa PySide6 / Qt. En una instalación, el programa, la extensión, la configuración y los datos viven juntos en `Aplicacion\`; los datos modificables están en `Aplicacion\datos\`. La app resuelve las rutas desde la carpeta de su propio ejecutable, de modo que puedes mover el directorio completo. Ejecuta `Instalar.bat` después de moverlo para renovar las rutas absolutas que Windows necesita en el Registro, los accesos y el puente nativo del navegador. El instalador migra los datos de instalaciones anteriores y conserva los datos locales al actualizar o desinstalar.
+La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. La distribución de Windows incluye su propio runtime en `Aplicacion\_internal\`. El ejecutable toma `Aplicacion\` como raíz y guarda los datos modificables en `Aplicacion\datos\`.
 
 ## Ejecutar desde el código
 
-1. Instala Python 3.12 y asegúrate de que `py -3` funcione en Windows.
+1. Instala Python 3.12 para Windows y verifica `py -3.12 --version`.
 2. Ejecuta `scripts\Ejecutar en desarrollo.bat`. La primera vez crea `.venv` e instala las versiones fijadas en `requirements.txt` (requiere Internet).
-3. Cierra la aplicación desde su icono en la bandeja antes de volver a abrirla. No ejecutes simultáneamente la versión instalada: ambas utilizan la misma instancia y configuración.
+3. Usa la ventana **Cicerón · desarrollo**. Guarda sus datos en `.desarrollo\datos\`, con una instancia y un evento de activación propios. Puedes mantener abierta la copia diaria a la vez. El perfil de desarrollo tiene deshabilitados el registro del puente, los accesos de Inicio y el inicio automático.
 
-Para actualizar dependencias del entorno, ejecuta `scripts\preparar.bat`.
+Para actualizar dependencias ejecuta `scripts\preparar.bat`. Si el entorno se movió o corresponde a otra versión de Python, el script aparta la carpeta existente y crea un entorno nuevo en la ruta actual.
 
 ## Crear e instalar el ejecutable
 
-Ejecuta `scripts\Crear EXE.bat`: compila el programa en `internos\Ciceron\Ciceron.exe` con sus dependencias en `internos\Ciceron\_internal`, y genera el puente auxiliar `internos\CiceronHost.exe`. Después ejecuta `Instalar.bat` desde la carpeta principal. Instala en `Aplicacion\` y conserva allí los datos. `Desinstalar.bat` retira los componentes administrados y conserva `Aplicacion\datos\` y la extensión cargada.
+Las verificaciones normales se hacen desde el código. Si el usuario pide empaquetar una revisión concreta, prepara una copia aislada de esa revisión y ejecuta allí `scripts\Crear EXE.bat`. Los resultados son `internos\Ciceron\Ciceron.exe`, `internos\Ciceron\_internal\` y `internos\CiceronHost.exe`. La instalación diaria es una acción separada. Cuando se autorice, `Instalar.bat` instalará ese paquete en `Aplicacion\`, con la carpeta de datos existente.
+
+## Mover la carpeta y reparar la integración
+
+1. Cierra Cicerón y las miniapps. Mueve la carpeta `Aplicacion\` completa y ejecuta `Reparar integracion.bat` desde la nueva ubicación, o usa **Estado → Reparar integración** en la versión instalada.
+2. La reparación vuelve a apuntar los accesos propios, la entrada de inicio automático si estaba activa y el puente del navegador. Los accesos a programas externos conservan su destino. También puedes ejecutar `Instalar.bat -Reparar -InstallDir "D:\Mis programas\Cicerón"` desde el repositorio. Si una copia anterior a esta función ya se movió y aún carece de referencia a su ubicación previa, indica la carpeta anterior con `-PreviousRoot "C:\Ruta anterior\Aplicacion"`.
+3. Si Chromium conserva la ruta antigua, abre la página de extensiones de cada perfil, retira la ficha que apunta a esa carpeta y usa **Cargar descomprimida** con la nueva `00 EXTENSION\`. Cierra y vuelve a abrir el navegador si aún tiene una conexión nativa de la ubicación anterior.
+
+## Recuperar una versión
+
+Una actualización que cambia componentes conserva en `Aplicacion\version-anterior\` el ejecutable, su runtime y, si estaban instalados, la extensión y el puente compatibles. Una reparación idéntica conserva el respaldo anterior. Para recuperarlo, cierra Cicerón y ejecuta `Recuperar version anterior.bat` dentro de `Aplicacion\`. El instalador comprueba las huellas del respaldo antes de copiarlo. Abre Cicerón y revisa la integración del navegador.
+
+`internos\formato-datos.txt` declara el formato que escribe la revisión. Increméntalo cuando una revisión vaya a escribir datos que la anterior no pueda leer. Si cambia, el instalador crea `Aplicacion\datos-antes-de-actualizar-…\` antes de reemplazar el programa. La recuperación de la versión mantiene los datos actuales. Una versión anterior al soporte Python puede requerir el índice de paquetes anterior para mostrar su biblioteca.
+
+Si una versión antigua necesita el formato anterior, cierra el centro y las miniapps, duplica el respaldo y conserva aparte una copia completa de los datos actuales. Recupera únicamente los archivos que necesites desde la copia del respaldo o prueba primero con ese respaldo en un perfil separado. Si vas a sustituir el índice completo para recuperar la biblioteca antigua, deja fuera del perfil activo el directorio actual `datos\` como copia identificada y copia el respaldo completo a un nuevo `datos\`. Para volver a la revisión reciente, conserva igualmente los cambios hechos mientras usabas la antigua antes de retornar a los datos actuales.
 
 ## Estructura
 
@@ -27,7 +41,7 @@ Ejecuta `scripts\Crear EXE.bat`: compila el programa en `internos\Ciceron\Cicero
 - `archivo/`: material histórico local excluido de la publicación.
 - `.venv/`, `.compilacion/`, `.salida/`: archivos locales de desarrollo generados al ejecutar los scripts; no se versionan.
 
-Las rutas internas siempre se forman respecto de `Aplicacion\`; no las construyas desde el directorio actual ni fijes la unidad o la ruta del usuario. Las excepciones son integraciones administradas por Windows, como el menú Inicio, Run y el registro de Native Messaging, que requieren rutas absolutas. `Instalar.bat` las recrea para la ubicación actual. El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino. Los avisos dependen del título de la ventana activa, por lo que pueden producir falsos positivos o no detectar una página.
+Las rutas internas se forman respecto de `Aplicacion\`. El menú Inicio, Run y Native Messaging requieren rutas absolutas administradas por Windows. **Reparar integración** las recrea para la ubicación actual. El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino.
 
 ## Pruebas
 
@@ -42,6 +56,8 @@ El instalador, la opción «Abrir al iniciar sesión» y el desinstalador compar
 Para comprobar la casilla de inicio sin tocar el Registro real, ejecuta `.venv\Scripts\python.exe tests\inicio.py`.
 
 Las pruebas de instalación también fuerzan un fallo al actualizar el acceso directo y un cambio simultáneo en el Registro. Verifican que se restaure el ejecutable anterior y no se sobrescriba el cambio ajeno.
+
+`tests\desarrollo.py` arranca dos procesos de Cicerón desde el código con perfiles distintos y verifica a cuál llega la activación. `tests\portabilidad.ps1` prueba el traslado a una ruta con espacios, la reparación y la recuperación con ejecutables simulados y claves de prueba. `tests\datos.py` prueba dos miniapps Python reales y una exportación selectiva. Los datos y las claves de estas pruebas son temporales.
 
 Para verificar el inicio y parada del contador, la fecha a medianoche, la hora opcional y el calendario, ejecuta `.venv\Scripts\python.exe tests\inicio_cuenta.py`. La prueba usa datos temporales.
 

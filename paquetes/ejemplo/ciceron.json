@@ -1,10 +1,12 @@
 {
   "schema": 1,
   "id": "local.notas-ejemplo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Notas de ejemplo",
   "description": "Editor pequeño con interfaz propia y preferencias de Cicerón.",
-  "entrypoint": "Notas.exe",
+  "entrypoint": "notas.pyw",
+  "python": "3.12",
+  "data": {"version": 1, "files": ["nota.txt"]},
   "icon": "icono.png",
   "dock": {"visible": true, "wheel": "passthrough"},
   "settings": [

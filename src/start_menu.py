@@ -8,7 +8,7 @@ import re
 import uuid
 
 from app_packages import APP_ID, RESERVED, atomic_json, json_object
-from app_paths import application_root
+from app_paths import application_root, development_mode
 
 
 MARKER = 'Ciceron.Library:'
@@ -51,6 +51,8 @@ class StartMenuApps:
         return None
 
     def update(self, item, tags, previous=None):
+        if development_mode():
+            return
         if previous is not None and not self.folder.is_dir():
             return
         shell = self.shell()
@@ -91,6 +93,8 @@ class StartMenuApps:
             tmp.unlink(missing_ok=True)
 
     def remove(self, item):
+        if development_mode():
+            return
         if self.folder.is_dir():
             path = self.find(self.shell(), item)
             if path:

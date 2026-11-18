@@ -2,11 +2,13 @@
 from pathlib import Path
 import sys
 
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QFrame, QPushButton, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from window_glass import GlassBackdrop
+from edge_dock import EdgeDock
+from windows_glass import client_bounds
 
 
 def luminance(color):
@@ -94,4 +96,33 @@ def variation(y):
 assert variation(45) > 180, 'V3 pierde la transparencia en el fondo.'
 assert variation(127) < variation(45) * .65, 'Falta el desenfoque dentro del botón V3.'
 window.close()
+
+# Render the actual V2 dock shader against known backgrounds without capturing the desktop.
+dock = EdgeDock(QIcon(), lambda: None)
+dock.set_glass(False)
+dock.move(120, 100)
+dock.show()
+dock.progress = 1
+dock.layout_icons()
+dock.layer.show()
+app.processEvents()
+assert dock.layer.isValid() and not dock.layer.error, dock.layer.error
+bounds = client_bounds(int(dock.winId()))
+assert bounds is not None
+source = QImage(bounds[2], bounds[3], QImage.Format.Format_RGB32)
+
+def dock_pixel(color, light):
+    source.fill(QColor(color))
+    dock.layer.set_frame(source.copy(), bounds)
+    dock.layer.light = light
+    frame = dock.layer.grabFramebuffer()
+    center = dock.optic_rect().center() * frame.devicePixelRatio()
+    return frame.pixelColor(round(center.x()), round(center.y()))
+
+dark = dock_pixel('#000000', False)
+assert dark.red() < dark.green() < dark.blue() < 45, dark.name()
+assert dock_pixel('#000000', True).lightness() < 50
+blue = dock_pixel('#1e519e', False)
+assert blue.blue() > blue.green() > blue.red() and blue.blue() > 100, blue.name()
+dock.close()
 print(f'Vidrio: contraste mínimo {minimum:.2f}:1 en claro y oscuro contra blanco y negro.')

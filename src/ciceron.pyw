@@ -1,7 +1,7 @@
 """Cicerón: centro personal para Windows, interfaz Qt."""
 import ctypes, datetime as dt, json, math, os, sys, time, winreg
 from _ctypes import COMError
-from app_paths import application_root, data_root, resolve_app_path, stored_app_path, windows_appdata_root
+from app_paths import application_root, data_root, development_mode, instance_suffix, resolve_app_path, stored_app_path, windows_appdata_root
 from app_packages import PACKAGE_EXT, PackageStore, app_tags, fold_search
 from browser_ui import BrowserDialog
 from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBo
     QAbstractSpinBox, QCalendarWidget, QSizePolicy, QStackedWidget, QToolButton)
 from PySide6.QtCore import QSize
 from package_ui import edit_settings, install_packages
+from data_ui import export_dialog, import_dialog
 from start_menu import StartMenuApps, pending_launches, request_launch
 from windows_glass import restore_above_taskbar
 
@@ -249,7 +250,10 @@ class App:
         menu.addSeparator()
         menu.addAction('Salir', QApplication.quit)
         menu.aboutToShow.connect(self.update_tray_actions)
-        self.tray.setContextMenu(menu); self.tray.setToolTip('Cicerón'); self.tray.activated.connect(self.tray_clicked); self.tray.show()
+        self.tray.setContextMenu(menu)
+        self.tray.setToolTip(self.window.windowTitle())
+        self.tray.activated.connect(self.tray_clicked)
+        self.tray.show()
         self.render(); self.timer=QTimer(); self.timer.timeout.connect(self.tick); self.timer.start(1000); self.tick()
         if self.cfg['show_timer'] and target(self.cfg): self._show_count()
         if self.broken_config: QMessageBox.warning(self.window,'Configuración','No se pudo leer la configuración; se conservó el archivo original.')
@@ -319,7 +323,7 @@ class App:
             self.open_center()
     def build_window(self):
         self.window = CenterWindow()
-        self.window.setWindowTitle('Cicerón')
+        self.window.setWindowTitle('Cicerón · desarrollo' if development_mode() else 'Cicerón')
         self.window.resize(418, 400)
         self.window.setMinimumSize(340, 315)
         outer = QVBoxLayout(self.window)
@@ -469,6 +473,7 @@ class App:
     def build_settings(self, content):
         content.addWidget(caption('Apariencia', 'heading'))
         version = PreferenceBox()
+        self.version_control = version
         version.setAccessibleName('Versión de la interfaz')
         for key, label in UI_VERSIONS.items():
             version.addItem(label, key)
@@ -506,19 +511,65 @@ class App:
         content.addSpacing(4)
         content.addWidget(caption('Inicio', 'heading'))
         startup = ClearCheckBox()
+        self.startup_control = startup
         startup.setFixedSize(22, 22)
         startup.setAccessibleName('Mostrar el centro al abrir Cicerón')
         startup.setChecked(bool(self.cfg['open_center_on_start']))
         startup.toggled.connect(lambda checked: self.change_preference('open_center_on_start', checked, startup))
         self.card(content, 'Abrir el centro al iniciar', '', control=startup)
         self.card(content, 'Windows y enfoque', '', [('Opciones', self.options)])
+        content.addWidget(caption('Datos', 'heading'))
+        self.card(content, 'Trasladar datos de aplicaciones', '', [
+            ('Exportar', lambda: self.transfer_data(export=True)),
+            ('Importar', self.transfer_data),
+        ])
+
+    def transfer_data(self, *, export=False):
+        parent = self.window.window()
+        try:
+            if export:
+                export_dialog(parent, self.packages,
+                              [item['package'] for item in self.managed_apps], self.cfg)
+            else:
+                import_dialog(parent, self.packages, self.restore_preferences)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(parent, 'Datos de Cicerón', str(error))
+
+    def restore_preferences(self, values):
+        old = self.cfg.copy()
+        self.cfg.update(values)
+        if not self.save():
+            self.cfg = old
+            return False
+        for key, control in (
+            ('ui_version', self.version_control), ('theme', self.theme_control),
+            ('clarity', self.clarity_control), ('glass', self.glass_control),
+            ('open_center_on_start', self.startup_control),
+        ):
+            blocked = control.blockSignals(True)
+            if isinstance(control, QComboBox):
+                control.setCurrentIndex(control.findData(self.cfg[key]))
+            else:
+                control.setChecked(self.cfg[key])
+            control.blockSignals(blocked)
+        self.count.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self.cfg['topmost'])
+        if self.cfg['show_timer'] and target(self.cfg):
+            self._show_count()
+        else:
+            self._hide_count()
+        self.last_poll = 0
+        self.apply_appearance()
+        self.tick()
+        self.render()
+        return True
 
     def build_status(self, content):
         content.addWidget(button('Volver a comprobar', self.refresh_status),
                           alignment=Qt.AlignmentFlag.AlignLeft)
         self.status_fields = {}
         for name, title, actions in (
-            ('program', 'Instalación de Cicerón', [('Abrir carpeta', self.open_install_folder)]),
+            ('program', 'Instalación de Cicerón', [('Abrir carpeta', self.open_install_folder)] +
+             ([('Reparar integración', self.repair_integration)] if getattr(sys, 'frozen', False) else [])),
             ('shortcut', 'Acceso en el menú Inicio', []),
             ('startup', 'Inicio automático', []),
             ('data', 'Configuración y biblioteca', [('Abrir datos', lambda: self.open_location(DATA))]),
@@ -633,6 +684,7 @@ class App:
         if self.dock is None:
             from edge_dock import EdgeDock
             self.dock = EdgeDock(icon(), self.toggle_settings_panel)
+            QApplication.instance().aboutToQuit.connect(self.dock.shutdown)
         self.dock.pure = bool(QApplication.instance().property('pureGlass'))
         self.dock.theme_dark = self.window.dark
         self.dock.monochrome = self.window.monochrome
@@ -767,6 +819,7 @@ class App:
                 menu.addAction('Cambiar archivo vinculado', lambda checked=False, i=item: self.relink_app(i))
             menu.addAction('Editar etiquetas', lambda checked=False, i=item: self.edit_app_tags(i))
             start = menu.addMenu('Inicio de Windows')
+            start.setEnabled(not development_mode())
             add_shortcut = start.addAction('Añadir acceso', lambda checked=False, i=item: self.add_start_shortcut(i))
             add_shortcut.setEnabled(exists)
             start.addAction('Quitar acceso', lambda checked=False, i=item: self.remove_start_shortcut(i))
@@ -891,6 +944,14 @@ class App:
         folder = self.install_dir()
         self.open_location(folder if folder.is_dir() else Path(sys.executable).parent)
 
+    def repair_integration(self):
+        command = self.install_dir() / 'Reparar integracion.bat'
+        if command.is_file():
+            self.open_location(command)
+        else:
+            QMessageBox.information(self.window, 'Reparar integración',
+                                    'Abre Instalar.bat con la opción -Reparar desde la carpeta del proyecto.')
+
     def refresh_status(self):
         from browser_bridge import sessions
         install = self.install_dir() / 'Ciceron.exe'
@@ -902,21 +963,27 @@ class App:
         fields = self.status_fields
         for detail in fields.values():
             detail.show()
+        if development_mode():
+            state = 'Perfil de desarrollo'
         fields['program'].setText(state)
         fields['program'].setToolTip(str(install))
         shortcuts = Path(os.environ.get('APPDATA', str(Path.home()))) / 'Microsoft/Windows/Start Menu/Programs'
         shortcut = shortcuts / 'Cicerón.lnk'
         legacy_shortcut = shortcuts / 'Mi centro.lnk'
         fields['shortcut'].setText('Acceso encontrado' if shortcut.is_file() or legacy_shortcut.is_file() else 'Acceso no encontrado')
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as registry:
-                raw, _ = winreg.QueryValueEx(registry, RUN_VALUE)
-            startup = 'Activado' if isinstance(raw, str) and Path(
-                os.path.expandvars(raw.strip().strip('"'))) == install and installed else 'La entrada apunta a otra ruta'
-        except FileNotFoundError:
-            startup = 'Desactivado'
-        except OSError:
-            startup = 'No se pudo consultar'
+        if development_mode():
+            fields['shortcut'].setText('Deshabilitado en desarrollo')
+            startup = 'Deshabilitado en desarrollo'
+        else:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as registry:
+                    raw, _ = winreg.QueryValueEx(registry, RUN_VALUE)
+                startup = 'Activado' if isinstance(raw, str) and Path(
+                    os.path.expandvars(raw.strip().strip('"'))) == install and installed else 'La entrada apunta a otra ruta'
+            except FileNotFoundError:
+                startup = 'Desactivado'
+            except OSError:
+                startup = 'No se pudo consultar'
         fields['startup'].setText(startup)
         config_state = 'Requiere revisión' if self.broken_config or self.bad_apps else (
             'Datos disponibles' if CONFIG.is_file() or APPS.is_file() else 'Se crearán al guardar cambios')
@@ -1099,14 +1166,13 @@ class App:
         date_field = QFrame()
         date_field.setObjectName('dateField')
         date_row = QHBoxLayout(date_field)
-        date_row.setContentsMargins(2, 0, 3, 0)
-        date_row.setSpacing(0)
+        date_row.setContentsMargins(0, 0, 0, 0)
+        date_row.setSpacing(6)
         date_row.addWidget(date, 1)
         calendar_popup = None
 
         def build_calendar():
-            picker = GlassDialog(d)
-            picker.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+            picker = QDialog(d, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
             picker.setWindowTitle('Elegir fecha')
             picker_layout = QVBoxLayout(picker)
             picker_layout.setContentsMargins(7, 6, 7, 6)
@@ -1138,6 +1204,9 @@ class App:
             if picker.isVisible():
                 picker.reject()
                 return
+            owner = d.window()
+            picker.setStyleSheet(stylesheet(getattr(owner, 'dark', d.dark), False,
+                                            monochrome=self.window.monochrome))
             calendar.setSelectedDate(date.date())
             picker.adjustSize()
             point = date_field.mapToGlobal(QPoint(0, date_field.height() + 4))
@@ -1201,12 +1270,13 @@ class App:
         top=QCheckBox('Mantener el contador sobre otras ventanas'); top.setChecked(bool(self.cfg['topmost'])); box.addWidget(top)
         startup=QCheckBox('Abrir al iniciar sesión en Windows')
         old_startup=None; old_startup_type=None; startup_exists=False
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY) as k:
-                old_startup,old_startup_type=winreg.QueryValueEx(k,RUN_VALUE); startup_exists=True
-        except FileNotFoundError: pass
-        except OSError as e:
-            QMessageBox.warning(self.window,'Inicio automático',f'No se pudo consultar el Registro: {e}'); return
+        if not development_mode():
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY) as k:
+                    old_startup,old_startup_type=winreg.QueryValueEx(k,RUN_VALUE); startup_exists=True
+            except FileNotFoundError: pass
+            except OSError as e:
+                QMessageBox.warning(self.window,'Inicio automático',f'No se pudo consultar el Registro: {e}'); return
         install_dir=application_root()
         owned_paths={os.path.normcase(str(install_dir / 'Ciceron.exe'))}
         own_entry=isinstance(old_startup,str) and os.path.normcase(os.path.expandvars(old_startup.strip().strip('"'))) in owned_paths
@@ -1314,10 +1384,11 @@ def main():
     kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
     kernel.WaitForSingleObject.restype = ctypes.c_ulong
     kernel.CloseHandle.argtypes = kernel.SetEvent.argtypes = [ctypes.c_void_p]
-    activate = kernel.CreateEventW(None, False, False, r'Local\Ciceron_AbrirCentro_v1')
+    suffix = instance_suffix()
+    activate = kernel.CreateEventW(None, False, False, r'Local\Ciceron_AbrirCentro_v1' + suffix)
     if not activate:
         raise ctypes.WinError()
-    mutex = kernel.CreateMutexW(None, False, r'Local\Ciceron_Unica_v2')
+    mutex = kernel.CreateMutexW(None, False, r'Local\Ciceron_Unica_v2' + suffix)
     mutex_status = kernel.GetLastError()
     try:
         if not mutex:
@@ -1326,7 +1397,7 @@ def main():
             if '--abrir' in sys.argv:
                 kernel.SetEvent(activate)
             return 0
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ciceron.MiCentro')
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ciceron.MiCentro' + suffix)
         app = QApplication(sys.argv)
         app.setWindowIcon(icon())
         app.setQuitOnLastWindowClosed(False)

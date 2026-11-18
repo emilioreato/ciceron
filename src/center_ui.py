@@ -194,26 +194,23 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         }}
         """
     styles += '''
-            QFrame#dateField { background: white; border-radius: 9px; }
-            QFrame#dateField QDateEdit { background: transparent; color: #202020; border: 1px solid transparent; }
-            QFrame#dateField QPushButton#calendarButton { background: white; color: #383838; border: 1px solid transparent; padding: 4px 8px; }
-            QFrame#dateField QDateEdit:focus, QFrame#dateField QPushButton#calendarButton:focus,
-            QFrame#dateField QPushButton#calendarButton:hover { border-color: #929292; }
+            QFrame#dateField { background: transparent; border: 0; }
+            QFrame#dateField QPushButton#calendarButton { padding-left: 10px; padding-right: 10px; }
         '''
     styles += '''
             QPushButton#destructive { background: #ffeded; color: #8f242c; border: 1px solid #e9aab0; }
             QPushButton#destructive:hover, QPushButton#destructive:focus { border-color: #a94b53; }
             QPushButton#destructive:disabled { background: #eaeaea; color: #555555; border-color: transparent; }
         '''
-    styles += '''
-                QCalendarWidget QWidget { font-size: 12px; }
-                QCalendarWidget QWidget#qt_calendar_navigationbar { background: #f1f1f1; }
-                QCalendarWidget QToolButton { background: transparent; color: #202020; border: 0; padding: 3px; }
-                QCalendarWidget QToolButton:hover { background: #e4e4e4; }
-                QCalendarWidget QAbstractItemView {
-                    background: white; color: #202020; alternate-background-color: #f3f3f3;
-                    selection-background-color: #333; selection-color: white;
-                }
+    styles += f'''
+                QCalendarWidget QWidget {{ font-size: 12px; }}
+                QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: {surface}; }}
+                QCalendarWidget QToolButton {{ background: transparent; color: {ink}; border: 0; padding: 3px; }}
+                QCalendarWidget QToolButton:hover {{ background: {highlight}; }}
+                QCalendarWidget QAbstractItemView {{
+                    background: {field}; color: {ink}; alternate-background-color: {surface};
+                    selection-background-color: {primary}; selection-color: {primary_ink};
+                }}
             '''
     return styles
 

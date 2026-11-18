@@ -7,11 +7,11 @@ Cicerón es un centro de control para aplicaciones personales de Windows. Su bar
 ## Ejecutar desde el código
 
 1. Instala Python 3.12 en Windows.
-2. Ejecuta `scripts\Ejecutar en desarrollo.bat` para preparar el entorno y abrir Cicerón.
+2. Ejecuta `scripts\Ejecutar en desarrollo.bat` para abrir un perfil de prueba que puede convivir con la copia instalada.
 
 ## Compilar e instalar
 
-Ejecuta `scripts\Crear EXE.bat` y después `Instalar.bat`. Una vez instalado, abre Cicerón con `Abrir Ciceron.bat` o busca **Cicerón** en Inicio.
+Empaqueta la revisión elegida en una copia aislada con `scripts\Crear EXE.bat`. Cuando quieras actualizar tu copia diaria, ejecuta `Instalar.bat` desde ese paquete. Abre la versión instalada con `Abrir Ciceron.bat` o busca **Cicerón** en Inicio. Para moverla o recuperar la versión anterior, usa los comandos de `Aplicacion\`.
 
 - [Guía de uso](LEEME.txt)
 - [Desarrollo y pruebas](DESARROLLO.md)

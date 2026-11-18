@@ -4,17 +4,19 @@ Para instalar o actualizar, ejecuta Instalar.bat. Si Cicerón está abierto, el 
 
 Para iniciar Cicerón cuando quieras, haz doble clic en «Abrir Ciceron.bat» o busca «Cicerón» en el menú Inicio. Si ya está funcionando, esto abre su panel. También puedes abrirlo desde el icono junto al reloj de Windows. Si no lo ves, pulsa la flecha ^ de iconos ocultos.
 
-La interfaz V2 se abre como un dock a la derecha. Acerca el cursor a la pestaña del borde para desplegar los iconos. La rueda sigue desplazando la ventana activa al pasar por el dock. El engranaje abre General. Las otras pestañas son Ajustes y Estado. En Ajustes > Interfaz puedes elegir V1 o V2. En batería el dock usa un vidrio básico sin capturar el fondo.
+El dock se abre a la derecha. Acerca el cursor a la pestaña del borde para desplegar los iconos. La rueda sigue desplazando la ventana activa al pasar por el dock. El engranaje abre General. Las otras pestañas son Ajustes y Estado. En Ajustes > Interfaz puedes elegir V1, V2 o V3. Con el ahorro de energía activo, el dock usa un vidrio básico sin capturar el fondo.
 
 En V2, los iconos de Timer, Navegador, Efectos y Ajustes abren su panel de vidrio pegado al dock. Pulsa el mismo icono para cerrar el panel o usa Escape. El calendario y las opciones de inicio se abren dentro del panel. Para aplicar cambios en el timer, usa Guardar y empezar.
 
 En General, la tarjeta Mis aplicaciones permite importar paquetes y varios accesos a la vez. Pulsa la lupa para buscar por nombre, etiqueta o ruta. Desde el menú ··· de cada aplicación puedes editar sus etiquetas o elegir Inicio de Windows > Añadir acceso para encontrarla por nombre desde Inicio. Quitar un acceso de Cicerón conserva su archivo. En la misma página están Timer y enfoque, Navegador, Efectos de escritorio y el acceso a Aplicaciones instaladas de Windows.
 
-En Ajustes puedes elegir tema claro, oscuro o del sistema y activar o desactivar Liquid Glass. El dock deja ver el fondo real. En corriente combina esa transparencia con una pequeña muestra del escritorio adyacente para refractar el borde. Los paneles de configuración conservan un fondo legible. También puedes decidir si Cicerón muestra la ventana al arrancar o queda en la bandeja. En Estado puedes comprobar la instalación, el acceso del menú Inicio, el arranque automático, tus datos, el vidrio y la conexión con el navegador.
+En Ajustes puedes elegir tema claro, oscuro o del sistema y activar o desactivar Liquid Glass para V2. Con el efecto activo, el dock captura una región del escritorio para refractar el borde. Los paneles conservan un fondo legible. También puedes decidir si Cicerón muestra la ventana al arrancar o queda en la bandeja. En Estado puedes comprobar la instalación, el acceso del menú Inicio, el arranque automático, tus datos, el vidrio y la conexión con el navegador.
 
 Para quitar la aplicación y su entrada de inicio en el Registro, ejecuta Desinstalar.bat y confirma. Si está abierta, se cerrará tras tu confirmación. La configuración personal se conserva. Entradas o accesos que pertenezcan a otros programas no se eliminan.
 
-La carpeta Aplicacion contiene el ejecutable, la extensión y los datos. La carpeta internos contiene el paquete de compilación y los instaladores. Mantén la estructura del repositorio; puedes mover la carpeta completa. Después de moverla, ejecuta Instalar.bat para actualizar las rutas de Windows. Para desarrollar la aplicación, consulta DESARROLLO.md.
+La carpeta Aplicacion contiene el ejecutable, la extensión y los datos. Para moverla, cierra Cicerón y las miniapps. Traslada Aplicacion completa y abre «Reparar integracion.bat» desde la nueva ubicación.
+
+Si una actualización falla en el uso diario, cierra Cicerón y ejecuta «Recuperar version anterior.bat» desde Aplicacion. Se recupera el programa anterior con sus componentes y se conservan los datos actuales. Consulta DESARROLLO.md para usar un respaldo de datos si cambia el formato.
 
 Si ya habías desactivado el inicio automático desde Cicerón, reinstalarlo conserva esa elección. Al repetir la instalación se reemplaza el ejecutable, incluso si es la misma versión. La desinstalación se puede repetir de forma segura.
 
@@ -30,7 +32,7 @@ Comprueba que Cicerón navegador funciona antes de desactivar la antigua Pausa F
 
 Cicerón funciona sin extensión. La extensión conserva la última configuración recibida de Cicerón si el puente no está disponible. Su menú ofrece Abrir Cicerón. Consulta y cambia el estado en Cicerón → Navegador. El puente no recibe direcciones ni contenido de las páginas. Al desinstalar Cicerón se retira el puente del Registro y se conservan los datos y la carpeta «00 EXTENSION» para que el navegador pueda seguir usándola; para retirarla por completo, elimínala desde la página de extensiones del navegador. Firefox no está incluido.
 
-Mantén «Aplicacion\00 EXTENSION» en su sitio mientras el navegador la use. Si mueves la carpeta de Cicerón, vuelve a cargar la extensión desde su nueva ubicación y ejecuta Instalar.bat de nuevo.
+Si mueves la carpeta de Cicerón, ejecuta «Reparar integracion.bat». Si el navegador conserva la ubicación anterior, vuelve a cargar la extensión descomprimida desde la nueva carpeta «00 EXTENSION».
 
 ESPACIO VISUAL
 
@@ -40,4 +42,5 @@ En la bandeja, «Preparar captura con Cicerón» deja unos tres segundos para ab
 Paquetes para Cicerón
 En General > Importar aplicaciones puedes instalar un archivo .ciceron.
 La tarjeta del paquete permite abrirlo, configurarlo, consultar sus datos o desinstalarlo.
+En Ajustes > Datos puedes exportar las apps elegidas a un solo archivo .ciceron-datos e importarlo en otro perfil. Cierra las apps antes de trasladar sus datos. Las apps con datos existentes se omiten por defecto.
 Para crear un paquete, consulta docs/paquetes-ciceron.md y el ejemplo en paquetes/ejemplo.

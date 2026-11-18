@@ -6,6 +6,13 @@ import time
 from PySide6.QtGui import QImage
 from windows_glass import BackdropCapture
 
+# comtypes initializes COM on its first importing thread and finalizes it at
+# process exit. Keep that lifetime on the UI thread; workers own separate apartments.
+try:
+    import comtypes
+except (ImportError, OSError):
+    comtypes = None
+
 
 capture_lock = threading.Lock()
 
@@ -100,7 +107,8 @@ class DockBackdropCapture:
             sx, sy = sx-x, sy-y
             pixels = source[sy:sy+height:2, sx:sx+width:2]
             rows, columns = pixels.shape[:2]
-            frames.append((area, QImage(pixels.tobytes(), columns, rows, columns * 4, QImage.Format.Format_RGB32)))
+            image = QImage(pixels.tobytes(), columns, rows, columns * 4, QImage.Format.Format_RGB32)
+            frames.append((area, image.copy()))
         lens_frame = None
         if lens_area is not None:
             sx, sy, width, height = lens_area
@@ -126,12 +134,12 @@ class DockBackdropCapture:
             try:
                 import numpy
                 self.numpy = numpy
-                import comtypes
-                import dxcam
-                self.com = comtypes
-                self.factory = getattr(dxcam, '__factory')
-                self.com.CoInitialize()
-                initialized = True
+                if comtypes is not None:
+                    import dxcam
+                    self.com = comtypes
+                    self.factory = getattr(dxcam, '__factory')
+                    self.com.CoInitialize()
+                    initialized = True
             except (ImportError, OSError, RuntimeError, AttributeError):
                 pass
             while not self.closed.is_set():
@@ -258,7 +266,8 @@ class LensCapture:
         try:
             import numpy as np
             try:
-                import comtypes
+                if comtypes is None:
+                    raise ImportError('comtypes')
                 import dxcam
                 comtypes.CoInitialize()
                 initialized = True

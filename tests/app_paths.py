@@ -35,7 +35,14 @@ with TemporaryDirectory() as temporary:
         moved_executable.write_bytes(b'test')
         with patch.dict(os.environ, {'CICERON_HOME': str(moved)}, clear=False):
             assert app_paths.resolve_app_path('tools/my-app.exe') == (moved / 'tools' / 'my-app.exe').resolve()
-            assert app_paths.resolve_app_path(local_executable) == moved_executable.resolve()
+            assert app_paths.resolve_app_path(local_executable) == local_executable.resolve()
+    with patch.dict(os.environ, {'CICERON_HOME': str(root), 'CICERON_DATA': '', 'CICERON_DEV': '1'}):
+        dev_namespace = app_paths.instance_suffix()
+        assert dev_namespace.startswith('_Dev_')
+        with patch.dict(os.environ, {'CICERON_HOME': str(moved)}):
+            assert app_paths.instance_suffix() != dev_namespace
+        with patch.dict(os.environ, {'CICERON_DEV': ''}):
+            assert app_paths.instance_suffix() == ''
 
 original_executable = sys.executable
 was_frozen = getattr(sys, 'frozen', None)
