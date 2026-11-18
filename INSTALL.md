@@ -21,7 +21,11 @@ La primera instalación prepara las dependencias de `requirements-runtime.txt` e
 
 ## Cambiar código y añadir miniapps
 
-Para ver un cambio en segundos, usa `scripts\Ejecutar en desarrollo.bat`. Si ya está abierto, sal de **Cicerón · desarrollo** desde la bandeja y vuelve a lanzarlo. Lee los archivos actuales del repositorio y usa `.desarrollo\datos\`. La copia diaria ejecuta la revisión que activaste con el instalador. Cuando hay varios agentes, prueba o instala desde una copia estable de la revisión elegida.
+Para vincular la copia diaria al repo, ejecuta una vez `Instalar.bat -FuentesVivas` con `Aplicacion\` dentro del repositorio. Los cambios guardados en los módulos Python de `src\` reinician el centro automáticamente. Si hay un diálogo modal abierto, espera a que lo cierres. El perfil diario y sus datos permanecen en `Aplicacion\datos\`. Si una edición tiene un error de sintaxis, el proceso actual sigue abierto. Si falla el arranque desde el repo, se utiliza la copia estable instalada y se guarda el error en `datos\recarga-error.log`.
+
+Los cambios al instalador, las dependencias y la extensión del navegador mantienen sus propios pasos de actualización. Si mueves solo `Aplicacion\`, se usa su copia local. **Recuperar versión anterior** activa una revisión fija. También puedes instalar una revisión fija con `Instalar.bat`.
+
+Para probar con otro perfil, usa `scripts\Ejecutar en desarrollo.bat`. Lee los archivos actuales del repositorio y usa `.desarrollo\datos\`. Si ya está abierto, sal de **Cicerón · desarrollo** desde la bandeja y vuelve a lanzarlo.
 
 Una miniapp puede entregarse como `.ciceron` con un `.exe` o un punto de entrada Python 3.12. Mantén su ID entre versiones y guarda los datos persistentes declarados dentro de `CICERON_APP_DATA`. En el centro, importa el paquete desde **General**. Para trasladar los datos de una o varias apps, usa **Datos → Exportar / Importar**. En el destino, instala primero las apps compatibles. Si ya hay datos, la importación omite esa app por defecto y ofrece respaldo previo si eliges reemplazarla. [Formato, ejemplo y comandos para crear un paquete](docs/paquetes-ciceron.md)
 

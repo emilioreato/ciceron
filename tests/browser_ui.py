@@ -1,10 +1,11 @@
 import hashlib,os,sys,tempfile
 from pathlib import Path
+from unittest.mock import patch
 os.environ['QT_QPA_PLATFORM']='offscreen'
 tmp=tempfile.TemporaryDirectory(); os.environ['APPDATA']=tmp.name; os.environ['CICERON_HOME']=str(Path(tmp.name)/'Aplicacion')
 sys.path.insert(0,str(Path('src').resolve()))
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication,QMessageBox,QInputDialog,QPushButton
+from PySide6.QtWidgets import QApplication,QMessageBox,QInputDialog,QLabel,QPushButton
 import browser_bridge as bridge
 import browser_ui
 from browser_ui import BrowserDialog,SelectorDialog,X_SIDEBAR
@@ -12,6 +13,18 @@ app=QApplication([])
 QMessageBox.information=lambda *a,**k: QMessageBox.StandardButton.Ok
 QMessageBox.warning=lambda *a,**k: QMessageBox.StandardButton.Ok
 d=BrowserDialog();d.change_enabled(True);assert bridge.load_policy()['enabled'] is True
+def indicator_color(dialog):
+    frame = dialog.status_indicator.grab().toImage()
+    return frame.pixelColor(frame.rect().center()).name()
+
+assert indicator_color(d) == '#e5656c'
+with patch.object(bridge, 'sessions', return_value=[{'browser': 'Edge', 'enabled': True}]):
+    d.refresh()
+    assert indicator_color(d) == '#2db47b'
+    assert d.status.text() == 'Activado · Edge'
+with patch.object(bridge, 'sessions', return_value=[{'browser': 'Edge', 'enabled': False}]):
+    d.refresh()
+    assert indicator_color(d) == '#e5656c'
 d.sidebar.setChecked(True);d.save_selectors();assert bridge.load_policy()['x_selectors']==[X_SIDEBAR]
 assert not d.save_selectors(['invalid; color:red'])
 assert bridge.load_policy()['x_selectors']==[X_SIDEBAR]
@@ -24,6 +37,11 @@ panel=BrowserDialog(attached=True); panel.show(); app.processEvents()
 assert panel.width()<450
 assert panel.toggle.accessibleName()=='Activar Pausa Feed'
 assert panel.status.text()=='Desactivado · Sin navegador conectado'
+indicator = panel.status_indicator.geometry()
+title = panel.findChild(QLabel, 'title').geometry()
+assert panel.width() - indicator.right() - 1 == 14
+assert indicator.left() - title.right() - 1 == 14
+assert abs(indicator.center().y() - title.center().y()) <= 1
 assert panel.toggle.geometry().right()==panel.edit_rules.geometry().right()
 original_size=panel.size()
 

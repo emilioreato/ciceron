@@ -1,6 +1,6 @@
 # Desarrollo de Cicerón
 
-La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. El instalador copia el código de la revisión elegida a `Aplicacion\_internal\src\` y prepara las dependencias en `Aplicacion\.entornos\`. Ambos modos de instalación guardan los datos modificables en `Aplicacion\datos\`. [Instalación y actualización diaria](INSTALL.md)
+La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. El instalador guarda una copia de la revisión elegida en `Aplicacion\_internal\src\` y prepara las dependencias en `Aplicacion\.entornos\`. Con `-FuentesVivas`, el centro ejecuta los módulos del repo y se relanza al guardarlos. Ambos modos usan `Aplicacion\datos\`. [Instalación y actualización diaria](INSTALL.md)
 
 ## Ejecutar desde el código
 

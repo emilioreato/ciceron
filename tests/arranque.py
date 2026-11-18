@@ -8,7 +8,10 @@ import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QPushButton
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'src'))
@@ -119,6 +122,40 @@ with TemporaryDirectory() as temporary:
         QTest.qWait(20)
     assert controller.dock.panel is not None
     assert controller.dock.panel.key == 'settings'
+
+    from focus_alert import FocusAlert, gaussian_backdrop
+    snapshot = QImage(650, 400, QImage.Format.Format_RGBX8888)
+    snapshot.fill(0xff181921)
+    for x in range(300, 350):
+        for y in range(400):
+            snapshot.setPixel(x, y, 0xffccb98a)
+    light = gaussian_backdrop(snapshot, 5)
+    heavy = gaussian_backdrop(snapshot, 17)
+    assert light.pixelColor(62, 40).red() > heavy.pixelColor(18, 11).red()
+    controller.cfg.update(show_timer=True, guardian=True, words='distractora',
+                          target=(module.dt.datetime.now() + module.dt.timedelta(minutes=10)).isoformat())
+    controller.last_poll = float('-inf')
+    with patch.object(module, 'foreground', return_value='Ventana distractora'), \
+            patch('focus_alert.capture_screen', return_value=snapshot) as capture:
+        controller.tick()
+        app.processEvents()
+        alert = controller.alert
+        assert isinstance(alert, FocusAlert) and alert.isVisible()
+        assert alert.geometry() == alert.screen_to_cover.geometry()
+        assert (alert.card.geometry().center() - alert.rect().center()).manhattanLength() <= 2
+        assert alert.countdown.text() == '9m' and '#c51b31' in alert.countdown.styleSheet()
+        assert alert.refresh_timer.isActive() and capture.call_count == 1
+        close = alert.findChild(QPushButton, 'dismiss')
+        QTest.mouseClick(close, Qt.MouseButton.LeftButton)
+        assert controller.alert is None and controller.cfg['guardian']
+        assert not alert.refresh_timer.isActive() and capture.call_count == 1
+        controller.last_alert = controller.last_poll = float('-inf')
+        controller.tick()
+        disable = controller.alert.findChild(QPushButton, 'disable')
+        QTest.mouseClick(disable, Qt.MouseButton.LeftButton)
+        assert controller.alert is None and not controller.cfg['guardian']
+    controller.cfg['show_timer'] = False
+    controller.tick()
     close_controller(controller)
 
     module.CONFIG.unlink()

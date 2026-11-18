@@ -119,4 +119,28 @@ with TemporaryDirectory() as temporary:
         else:
             raise AssertionError(f'Se aceptó esta ruta: {bad_name}')
 
+    long_store = PackageStore(base / ('ruta-' * 36) / 'store', base / 'datos-ruta-larga')
+    python_payload = base / 'python'
+    python_payload.mkdir()
+    (python_payload / 'probe.pyw').write_text(
+        'import json, os, sys\n'
+        'from pathlib import Path\n'
+        "from companion import VALUE\n"
+        "(Path(os.environ['CICERON_APP_DATA']) / 'prueba.json').write_text("
+        "json.dumps([os.getcwd(), sys.argv, VALUE]))\n", encoding='utf-8')
+    (python_payload / 'companion.py').write_text('VALUE = 12\n', encoding='utf-8')
+    (python_payload / 'ciceron.json').write_text(json.dumps({
+        'schema': 1, 'id': 'local.ruta-larga', 'version': '1.0.0', 'name': 'Ruta larga',
+        'entrypoint': 'probe.pyw', 'python': '3.12', 'args': ['con espacios'],
+    }), encoding='utf-8')
+    long_package = base / 'ruta-larga.ciceron'
+    create_package(python_payload, long_package)
+    _, python_spec = long_store.install(long_package)
+    long_item = long_store.entries()[0]
+    assert len(str(long_item['root'])) >= 260
+    assert long_store.launch(long_item).wait(timeout=10) == 0
+    cwd, argv, value = json.loads((long_store.data_folder(python_spec) / 'prueba.json').read_text())
+    assert Path(cwd) == long_item['root'].resolve()
+    assert argv == [str(Path(long_item['path']).resolve()), 'con espacios'] and value == 12
+
 print('Paquetes: idempotencia, integridad, reparación, ejecución, ajustes, actualización y desinstalación verificados.')

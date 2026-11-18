@@ -35,6 +35,8 @@ uniform float glass_tone;
 uniform float clear_mode;
 uniform float glass_blur;
 uniform float glass_opacity;
+uniform float glass_mix;
+uniform vec4 provisional;
 uniform float elapsed;
 uniform vec2 sample_origin;
 uniform vec2 sample_scale;
@@ -72,6 +74,12 @@ void main() {
             return;
         }
         float bevel = smoothstep(0.74, 0.94, edge);
+        float coverage = glass_opacity * (1.0 - smoothstep(0.975 - 1.5 / diameter, 0.975, edge));
+        vec4 fallback = vec4(provisional.rgb * provisional.a, provisional.a) * coverage;
+        if (glass_mix <= 0.0) {
+            gl_FragColor = fallback;
+            return;
+        }
         float depth = (0.975 - edge) * diameter * 0.5;
         vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
@@ -88,8 +96,14 @@ void main() {
             color += (texture2D(backdrop, coord+d, lod).rgb + texture2D(backdrop, coord-d, lod).rgb
                     + texture2D(backdrop, coord+vec2(d.x,-d.y), lod).rgb
                     + texture2D(backdrop, coord+vec2(-d.x,d.y), lod).rgb) * 0.0625;
-            float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
-            color = frosted ? mix(color, vec3(0.99), 0.62) : mix(color, vec3(0.13), 0.66);
+            bool text_surface = clear_mode > 3.5;
+            float feather = text_surface ? 11.0 : 1.5;
+            float alpha = glass_opacity * (1.0-smoothstep(0.975-feather/diameter, 0.975, edge));
+            if (text_surface) {
+                color = mix(color, vec3(clear_mode > 4.5 ? 0.97 : 0.12), 0.68);
+            } else {
+                color = frosted ? mix(color, vec3(0.99), 0.62) : mix(color, vec3(0.13), 0.66);
+            }
             gl_FragColor = vec4(color * alpha, alpha);
             return;
         }
@@ -112,7 +126,7 @@ void main() {
             float rim = smoothstep(0.975 - 5.2/diameter, 0.975 - 1.5/diameter, edge);
             color = mix(color, vec3(luminance < 0.55 ? 1.0 : 0.0), rim * 0.22);
             float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
-            gl_FragColor = vec4(color*alpha, alpha);
+            gl_FragColor = mix(fallback, vec4(color*alpha, alpha), glass_mix);
             return;
         }
         float blur = glass_blur + (appearance - 1.0) * 3.0;
@@ -143,7 +157,7 @@ void main() {
             color = mix(color, vec3(1.0), glint + rim * 0.10);
         }
         float alpha = (1.0 - smoothstep(0.975 - 1.5 / diameter, 0.975, edge)) * glass_opacity;
-        gl_FragColor = vec4(color * alpha, alpha);
+        gl_FragColor = mix(fallback, vec4(color * alpha, alpha), glass_mix);
         return;
     }
     float angle = r > 0.00001 ? atan(p.y, p.x) : 0.0;
@@ -218,7 +232,7 @@ def compile_lens():
                                      shaders.compileShader(FRAGMENT, GL.GL_FRAGMENT_SHADER))
     names = ('backdrop', 'pixels', 'body_height', 'interaction', 'surface', 'panel_radius',
              'glass_tone', 'clear_mode', 'glass_blur', 'glass_opacity', 'sample_origin', 'sample_scale',
-             'motion', 'elapsed', 'appearance')
+             'motion', 'elapsed', 'appearance', 'glass_mix', 'provisional')
     return program, {name: GL.glGetUniformLocation(program, name) for name in names}
 
 
@@ -235,7 +249,8 @@ def make_lens_texture():
 
 def paint_optic(program, uniform, pixel_width, sample_rect, motion, elapsed, vertices, appearance=1.0,
                 body_height=0.0, interaction=(0.0, 0.0), panel_radius=0.0,
-                surface=(0.0, 0.0, 1.0, 1.0), glass_tone=0.0, glass_blur=0.0, glass_opacity=1.0, clear_mode=0.0):
+                surface=(0.0, 0.0, 1.0, 1.0), glass_tone=0.0, glass_blur=0.0, glass_opacity=1.0, clear_mode=0.0,
+                glass_mix=1.0, provisional=(0.0, 0.0, 0.0, 0.0)):
     GL.glUseProgram(program)
     GL.glUniform1i(uniform['backdrop'], 0)
     GL.glUniform1f(uniform['pixels'], pixel_width)
@@ -247,6 +262,8 @@ def paint_optic(program, uniform, pixel_width, sample_rect, motion, elapsed, ver
     GL.glUniform1f(uniform['glass_tone'], glass_tone)
     GL.glUniform1f(uniform['glass_blur'], glass_blur)
     GL.glUniform1f(uniform['glass_opacity'], glass_opacity)
+    GL.glUniform1f(uniform['glass_mix'], glass_mix)
+    GL.glUniform4f(uniform['provisional'], *provisional)
     GL.glUniform2f(uniform['sample_origin'], *sample_rect[:2])
     GL.glUniform2f(uniform['sample_scale'], *sample_rect[2:])
     GL.glUniform2f(uniform['motion'], motion.x(), motion.y())

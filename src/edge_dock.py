@@ -100,7 +100,7 @@ class DockIcon(QToolButton):
 
 
 class DockHandle(QToolButton):
-    ARROW_RIGHT_INSET = 4
+    ARROW_RIGHT_INSET = 6
 
     def contextMenuEvent(self, event):
         dock = self.parentWidget()
@@ -124,13 +124,17 @@ class DockHandle(QToolButton):
         arrow = QPainterPath(center + QPointF(1.5, -4))
         arrow.lineTo(center + QPointF(-2, 0))
         arrow.lineTo(center + QPointF(1.5, 4))
-        light_background = dock.layer.light
-        if light_background is None:
-            light_background = not dock.theme_dark
-        ink = QColor('#343434' if light_background else '#f0f0f0')
-        painter.setPen(QPen(ink, 1.8, Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        painter.drawPath(arrow)
+        for color, width in ((QColor(0, 0, 0, 155), 2.6), (QColor(245, 246, 248, 244), 1.8)):
+            painter.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(arrow)
+
+
+class DockEdgeHover(QWidget):
+    def paintEvent(self, event):
+        # Win32 ignores fully transparent pixels when hit-testing layered windows.
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(255, 255, 255, 1))
 
 
 class DockOptics(QOpenGLWidget):
@@ -166,6 +170,10 @@ class DockOptics(QOpenGLWidget):
         self.error = None
         self.light = None
         self.tone_checked = 0.0
+        self.handoff_started = None
+        self.handoff_timer = QTimer(self)
+        self.handoff_timer.setSingleShot(True)
+        self.handoff_timer.timeout.connect(self.update)
 
     def initializeGL(self):
         try:
@@ -180,14 +188,16 @@ class DockOptics(QOpenGLWidget):
     def paintGL(self):
         GL.glClearColor(0, 0, 0, 0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
-        if self.frame is None or self.program is None:
+        owner = self.parentWidget()
+        dock_fallback = isinstance(owner, EdgeDock) and owner.glass_enabled and owner.progress > 0
+        if self.program is None or (self.frame is None and not dock_fallback):
             return
         GL.glDisable(GL.GL_DEPTH_TEST)
         GL.glEnable(GL.GL_BLEND)
         GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE_MINUS_SRC_ALPHA)
-        width, height = self.frame.width(), self.frame.height()
+        width, height = (self.frame.width(), self.frame.height()) if self.frame is not None else (1, 1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
-        if self.dirty:
+        if self.frame is not None and self.dirty:
             if self.texture_size == (width, height):
                 GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, width, height,
                                   GL.GL_BGRA, GL.GL_UNSIGNED_BYTE, self.frame.constBits())
@@ -209,19 +219,34 @@ class DockOptics(QOpenGLWidget):
         surface = (rect.x() / viewport_w, rect.y() / viewport_h,
                    rect.width() / viewport_w, rect.height() / viewport_h)
         current = client_bounds(int(owner.winId()))
-        if current is None or self.frame_bounds is None:
+        if current is None:
             return
         x, y, view_width, view_height = current
-        left, top, captured_width, captured_height = self.frame_bounds
+        left, top, captured_width, captured_height = self.frame_bounds or current
         physical_width, physical_height = surface[2] * view_width, surface[3] * view_height
         sample = ((x - left + surface[0] * view_width) / captured_width,
                   (y - top + surface[1] * view_height) / captured_height,
                   physical_width / captured_width, physical_height / captured_height)
+        glass_mix = 1.0
+        provisional = (0.0, 0.0, 0.0, 0.0)
+        if owner is dock:
+            if self.frame is None:
+                glass_mix = 0.0
+            elif self.handoff_started is not None:
+                t = min(1.0, (time.monotonic() - self.handoff_started) / .15)
+                glass_mix = t * t * (3 - 2 * t)
+                if t == 1.0:
+                    self.handoff_started = None
+                elif not self.handoff_timer.isActive():
+                    self.handoff_timer.start(16)
+            provisional = (.16, .16, .16, .40) if dock.theme_dark or dock.pure else (.67, .74, .85, .40)
         if getattr(dock, 'pure', False):
             from window_glass import draw_clear_material
             draw_clear_material(self, self.program, self.uniform, rect, sample,
                                 (physical_width, physical_height), owner.CORNER_RADIUS,
-                                dock.glass_opacity() if owner is dock else 1.0)
+                                dock.glass_opacity() if owner is dock else 1.0,
+                                controls=owner is not dock, light_text_background=bool(self.light),
+                                glass_mix=glass_mix, provisional=provisional)
             return
         radius = owner.CORNER_RADIUS * view_width / viewport_w
         # Keep the shader's perimeter wave available; the dock rests still.
@@ -232,7 +257,8 @@ class DockOptics(QOpenGLWidget):
                     panel_radius=min(physical_width / 2, physical_height / 2, radius),
                     glass_tone=float(bool(self.light) and not dock.theme_dark),
                     glass_blur=(2.35 if owner is dock else 3.2) - math.log2(captured_width / width),
-                    glass_opacity=dock.glass_opacity() if owner is dock else 1.0)
+                    glass_opacity=dock.glass_opacity() if owner is dock else 1.0,
+                    glass_mix=glass_mix, provisional=provisional)
 
     def set_frame(self, frame, bounds):
         if self.frame_bounds == bounds and self.frame is not None and frame == self.frame:
@@ -580,10 +606,11 @@ class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 4
-    PANEL_GAP = 10
+    PANEL_GAP = 6
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
+    HOVER_DELAY_MS = 85
     HIDE_DELAY = 0.03
     HANDLE_FADE_END = 0.90
 
@@ -600,16 +627,20 @@ class EdgeDock(QWidget):
         self.pending_open_scheduled = False
         self.backdrop = None
         self.last_frames = None
-        self.layer.hide()
+        # Establish the GL composition before the native dock is first shown.
+        self.layer.setVisible(QApplication.platformName() == 'windows')
         self.open_settings = open_settings
         self.entries = []
         self.gear = DockIcon(self, 'Ajustes de Cicerón', 'settings', open_settings)
         self.gear.hide()
+        self.edge_hover = DockEdgeHover(self)
+        self.edge_hover.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.edge_hover.hide()
         self.handle = DockHandle(self)
         self.handle.setAccessibleName('Desplegar Cicerón')
         self.handle.setToolTip('Cicerón')
         self.handle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.handle.clicked.connect(self.reveal_from_handle)
+        self.handle.clicked.connect(self.reveal)
         self.using_glass = False
         self.glass_enabled = True
         self.theme_dark = False
@@ -628,6 +659,9 @@ class EdgeDock(QWidget):
         self.animation = QTimer(self)
         self.animation.setTimerType(Qt.TimerType.PreciseTimer)
         self.animation.timeout.connect(self.update_dock)
+        self.hover_timer = QTimer(self)
+        self.hover_timer.setSingleShot(True)
+        self.hover_timer.timeout.connect(self.confirm_hover)
         self.capture_timer = QTimer(self)
         self.capture_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.capture_timer.timeout.connect(self.capture)
@@ -674,6 +708,8 @@ class EdgeDock(QWidget):
         self.layer.setGeometry(self.rect())
         self.layer.lower()
         self.handle.setGeometry(self.WIDTH - 25, height // 2 - 19, 25, 38)
+        self.edge_hover.setGeometry(self.WIDTH - self.EDGE_INSET - 1, self.handle.y(),
+                                    self.EDGE_INSET + 1, self.handle.height())
         self.layout_icons()
         if self.panel is not None:
             self.position_panel(self.panel)
@@ -687,6 +723,8 @@ class EdgeDock(QWidget):
     def set_glass(self, enabled):
         changed = self.glass_enabled != bool(enabled)
         self.glass_enabled = bool(enabled)
+        if changed and QApplication.platformName() == 'windows':
+            self.layer.setVisible(self.glass_enabled)
         if changed and self.isVisible():
             if self.glass_enabled and self.progress > 0 and not capture_mode():
                 self.glass_timer.start(180)
@@ -722,9 +760,12 @@ class EdgeDock(QWidget):
             self.backdrop = None
         self.last_frames = None
         self.using_glass = False
-        self.layer.hide()
+        self.layer.handoff_timer.stop()
+        self.layer.handoff_started = None
         self.layer.frame = None
+        self.layer.frame_bounds = None
         self.layer.light = None
+        self.layer.update()
         apply_capture_affinity(self, live=False)
         self.apply_glass_tone(True)
         self.update()
@@ -762,6 +803,7 @@ class EdgeDock(QWidget):
 
     def reset_to_handle(self):
         self.animation.stop()
+        self.hover_timer.stop()
         self.capture_timer.stop()
         self.glass_timer.stop()
         if self.backdrop is not None:
@@ -774,10 +816,24 @@ class EdgeDock(QWidget):
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        self.reveal()
+        # Native enter notifications can repeat while the animated mask changes.
+        if self.progress == 0 and self.transition_to == 0 and not self.hover_timer.isActive():
+            if self.pointer_over_dock():
+                self.hover_timer.start(self.HOVER_DELAY_MS)
+
+    def pointer_over_dock(self):
+        point = self.mapFromGlobal(QCursor.pos())
+        return self.handle.geometry().contains(point) or (self.progress > 0 and self.mask().contains(point))
+
+    def confirm_hover(self):
+        if self.isVisible() and self.pointer_over_dock():
+            self.reveal()
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
+        if self.pointer_over_dock():
+            return
+        self.hover_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.animation.isActive():
             self.animation.setInterval(16)
@@ -786,6 +842,7 @@ class EdgeDock(QWidget):
             self.animation.start(16)
 
     def reveal(self):
+        self.hover_timer.stop()
         self.glass_idle_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.glass_enabled and not capture_mode() and self.backdrop is None and not self.glass_timer.isActive():
@@ -797,16 +854,9 @@ class EdgeDock(QWidget):
             self.capture()
         self.update_dock()
 
-    def reveal_from_handle(self):
-        if self.theme_dark and self.glass_enabled and not self.pure:
-            self.progress = self.transition_to = 1.0
-            self.layout_icons()
-            self.layer.update()
-        self.reveal()
-
     def update_dock(self):
         now = time.monotonic()
-        over_dock = self.mask().contains(self.mapFromGlobal(QCursor.pos()))
+        over_dock = self.pointer_over_dock()
         if over_dock:
             self.leave_at = now + self.HIDE_DELAY
         keep_open = capture_mode() and self.transition_to > 0
@@ -818,15 +868,14 @@ class EdgeDock(QWidget):
             self.transition_to = target
         if self.motion_enabled and previous != target:
             distance = abs(target - self.transition_from)
-            opening = .12 if self.theme_dark and self.glass_enabled and not self.pure else .22
-            duration = (opening if target else .32) * max(.45, distance)
+            duration = (.22 if target else .32) * max(.45, distance)
             t = min(1.0, (now - self.transition_start) / duration)
             self.progress = self.transition_from + (target - self.transition_from) * t * t * (3 - 2 * t)
         else:
             self.progress = target
         if self.progress != previous:
             self.layout_icons()
-            if self.using_glass:
+            if self.layer.isVisible():
                 self.layer.update()
         if self.progress == 0.0 and not target:
             self.animation.stop()
@@ -860,7 +909,12 @@ class EdgeDock(QWidget):
             if self.isVisible():
                 apply_capture_affinity(self)
         rows = self.entries[:self.capacity] + [self.gear]
-        self.handle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, self.progress > .76)
+        icons_visible = self.progress > .76
+        self.handle.setVisible(folded)
+        self.edge_hover.setVisible(not folded)
+        self.handle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, icons_visible)
+        if folded:
+            self.handle.raise_()
         self.handle.update()
         for button in self.entries[self.capacity:]:
             button.hide()
@@ -873,10 +927,14 @@ class EdgeDock(QWidget):
             y = round(8 + index * self.STEP + (self.STEP - self.DIAMETER) / 2)
             button.setGeometry(round(self.WIDTH - self.EDGE_INSET - (self.CAPSULE_WIDTH + self.DIAMETER) / 2), y,
                                self.DIAMETER, self.DIAMETER)
-            button.setVisible(self.progress > .76 and region.contains(button.geometry().center()))
+            visible = icons_visible and region.contains(button.geometry().center())
+            button.setVisible(visible)
+            if visible and folded:
+                button.raise_()
             button.update()
-        self.handle.raise_()
-        hit_region = region.united(QRegion(self.handle.geometry()))
+        # Keep the last screen pixel over the dock after the inset capsule replaces the arrow.
+        edge = self.handle if folded else self.edge_hover
+        hit_region = region.united(QRegion(edge.geometry()))
         if self.mask() != hit_region:
             self.setMask(hit_region)
         if not self.using_glass:
@@ -889,11 +947,12 @@ class EdgeDock(QWidget):
         return QRectF(self.width() - width - self.EDGE_INSET, (self.height() - height) / 2, width, height)
 
     def glass_opacity(self):
-        t = min(1.0, self.progress / .58)
+        t = min(1.0, self.progress / .84)
         return t * t * (3 - 2 * t)
 
     def paintEvent(self, event):
-        if self.using_glass or self.progress == 0:
+        if self.progress == 0 or (self.glass_enabled and self.layer.isVisible()
+                                 and self.layer.isValid() and self.layer.program is not None):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -928,6 +987,8 @@ class EdgeDock(QWidget):
                     owner.layer.set_frame(frame, captured)
                     if not owner.using_glass:
                         owner.using_glass = True
+                        if owner is self and self.motion_enabled:
+                            self.layer.handoff_started = time.monotonic()
                         if owner is panel and self.pure:
                             panel.apply_glass_tone(panel.layer.light)
                         owner.update()

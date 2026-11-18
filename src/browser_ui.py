@@ -5,8 +5,9 @@ from pathlib import Path
 import subprocess
 import sys
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QMessageBox, QInputDialog, QLineEdit, QCheckBox)
+    QListWidgetItem, QMessageBox, QInputDialog, QLineEdit, QCheckBox, QWidget)
 from app_paths import application_root, development_mode
 import browser_bridge as bridge
 from center_ui import GlassDialog
@@ -30,6 +31,25 @@ def extension_dir():
         if installed.is_dir(): return installed
         return Path(__file__).resolve().parents[1]/'navegador'/'extension'
 
+class ConnectionIndicator(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(10, 10)
+        self.color = QColor('#e5656c')
+
+    def set_status(self, protecting, description):
+        self.color = QColor('#2db47b' if protecting else '#e5656c')
+        self.setToolTip(description)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.color)
+        painter.drawEllipse(self.rect())
+
+
 class BrowserDialog(GlassDialog):
     def __init__(self,parent=None,attached=False):
         super().__init__(parent, attached=attached)
@@ -39,7 +59,12 @@ class BrowserDialog(GlassDialog):
         box = QVBoxLayout(self)
         box.setContentsMargins(14, 10, 14, 12)
         box.setSpacing(10)
-        box.addWidget(label('Bloqueo web', 'title'))
+        header = QHBoxLayout()
+        header.setSpacing(14)
+        header.addWidget(label('Bloqueo web', 'title'), 1)
+        self.status_indicator = ConnectionIndicator()
+        header.addWidget(self.status_indicator, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        box.addLayout(header)
 
         row = QHBoxLayout()
         details = QVBoxLayout()
@@ -116,9 +141,11 @@ class BrowserDialog(GlassDialog):
         states = [item.get('enabled') for item in connected]
         active = requested if requested is not None else True in states
         state = 'Activado' if active else 'Desactivado'
-        if any(item.get('error') for item in connected):
+        error = any(item.get('error') for item in connected)
+        syncing = requested is not None and any(current != requested for current in states)
+        if error:
             connection = 'Error de conexión'
-        elif requested is not None and any(current != requested for current in states):
+        elif syncing:
             connection = f'{names} · sincronizando'
         elif names:
             connection = names
@@ -127,6 +154,8 @@ class BrowserDialog(GlassDialog):
         has_state = requested is not None or any(current is not None for current in states)
         status = f'{state} · {connection}' if has_state else connection
         self.status.setText(status)
+        protecting = active and connected and not (error or syncing or self.broken)
+        self.status_indicator.set_status(protecting, status)
         count = len(self.custom_selectors())
         self.rules_count.setText(f'{count} reglas' if count != 1 else '1 regla')
         self.next_enabled = not active

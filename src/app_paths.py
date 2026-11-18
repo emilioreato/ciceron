@@ -10,6 +10,12 @@ def source_installation_root():
     if (not getattr(sys, 'frozen', False) and runtime.name == '_internal' and
             (runtime / 'entorno.txt').is_file()):
         return runtime.parent
+    configured = os.environ.get('CICERON_SOURCE_ROOT')
+    if configured and not getattr(sys, 'frozen', False):
+        root = Path(configured).resolve()
+        if (root.parent == runtime and (root / '_internal' / 'fuentes-vivas.txt').is_file()
+                and (root / 'Ciceron.exe').is_file()):
+            return root
     return None
 
 

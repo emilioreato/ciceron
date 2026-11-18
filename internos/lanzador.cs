@@ -24,13 +24,14 @@ internal static class CiceronLauncher
         }
     }
 
-    private static Process Start(Func<ProcessStartInfo> configure, string sessionFile)
+    private static Process Start(Func<ProcessStartInfo> configure, string sessionFile, bool reload)
     {
         using (var maintenance = new System.Threading.Mutex(false, @"Local\CiceronInstalacion"))
         {
             bool ready;
-            try { ready = maintenance.WaitOne(10000); }
+            try { ready = maintenance.WaitOne(reload ? 250 : 10000); }
             catch (System.Threading.AbandonedMutexException) { ready = true; }
+            if (!ready && reload) return null;
             if (!ready) throw new InvalidOperationException("Hay una instalación de Cicerón en curso.");
             try
             {
@@ -65,11 +66,14 @@ internal static class CiceronLauncher
         string location = File.ReadAllText(Path.Combine(environment, "ubicacion.txt")).Trim();
         if (!String.Equals(environment, location, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("La carpeta de Cicerón se movió. Ejecuta Reparar integracion.bat.");
+        string entry = Path.Combine(code, "src", host ? "browser_bridge.py" : "ciceron.pyw");
+        string bootstrap = Path.Combine(code, "ejecutar_fuentes.py");
+        if (!host && File.Exists(bootstrap)) entry = bootstrap;
         return new ProcessStartInfo
         {
             FileName = Path.Combine(environment, "Scripts", host ? "python.exe" : "pythonw.exe"),
             WorkingDirectory = root,
-            Arguments = "-E -s -B " + Quote(Path.Combine(code, "src", host ? "browser_bridge.py" : "ciceron.pyw"))
+            Arguments = "-E -s -B " + Quote(entry)
                 + (args.Length == 0 ? "" : " " + String.Join(" ", Array.ConvertAll(args, Quote))),
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -86,8 +90,10 @@ internal static class CiceronLauncher
         try
         {
             string session = host ? null : Path.Combine(root, "centro-fuentes.lock");
-            using (var process = Start(() => Configure(root, host, args), session))
+            bool reload = !host && Array.IndexOf(args, "--ciceron-recarga") >= 0;
+            using (var process = Start(() => Configure(root, host, args), session, reload))
             {
+                if (process == null) return 0;
                 if (!host)
                 {
                     if (process.HasExited && process.ExitCode != 0)

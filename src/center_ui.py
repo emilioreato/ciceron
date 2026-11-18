@@ -44,6 +44,7 @@ def clear_styles(scope='', light=False, frost_controls=False, live_controls=Fals
     styles = (
         rule('QWidget', 'color: #f8f9fc; font-family: "Segoe UI Variable Text", "Segoe UI";'),
         rule('QLabel, QLabel#muted, QLabel#heroTitle, QLabel#heroDetail', f'color: {label_color}; background: transparent;'),
+        rule('QCheckBox', f'color: {label_color}; background: transparent;'),
         rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
              'background: transparent; border-color: transparent;'),
         rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',

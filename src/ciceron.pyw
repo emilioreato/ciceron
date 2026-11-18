@@ -11,7 +11,7 @@ from visual_playground import VisualDialog
 from pathlib import Path
 from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, Qt,
                             QTimer, QDate, QTime, Signal)
-from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen, QCursor
+from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
@@ -223,31 +223,6 @@ def remaining(t):
     if hours:
         return f'{hours}h {minutes}m'
     return f'{minutes}m' if minutes else '<1m'
-
-class FocusAlert(GlassDialog):
-    """Aviso de enfoque con el material y la cuenta activa de Cicerón."""
-    def __init__(self, parent, deadline, stop):
-        super().__init__(parent)
-        self.deadline=deadline
-        self.setWindowTitle('Cicerón · enfoque')
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
-        self.setMinimumWidth(360)
-        box=QVBoxLayout(self); box.setContentsMargins(28,24,28,24); box.setSpacing(12)
-        title=caption('Volvé a tu objetivo','title'); title.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(title)
-        desc=caption('El tiempo que queda para tu objetivo','muted'); desc.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(desc)
-        self.countdown=QLabel(); self.countdown.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.countdown.setStyleSheet('font-size: 32px; font-weight: 600; background: transparent;')
-        box.addWidget(self.countdown)
-        row=QHBoxLayout(); row.addWidget(button('Detener avisos',stop)); row.addWidget(button('Volver',self.accept,True)); box.addLayout(row)
-        self.refresh_timer=QTimer(self); self.refresh_timer.setInterval(1000); self.refresh_timer.timeout.connect(self.refresh_countdown)
-        self.refresh_countdown(); self.refresh_timer.start(); self.finished.connect(self.refresh_timer.stop)
-    def refresh_countdown(self):
-        self.countdown.setText(remaining(self.deadline))
-    def showEvent(self,event):
-        super().showEvent(event)
-        screen=QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-        if screen:
-            self.adjustSize(); self.move(screen.availableGeometry().center()-self.rect().center())
 
 def foreground():
     u=ctypes.windll.user32; u.GetForegroundWindow.restype=ctypes.c_void_p
@@ -1317,6 +1292,11 @@ class App:
                 self.open_tool(app_id, from_start=True)
                 continue
             item = next((item for item in self.managed_apps if item['package']['id'] == app_id), None)
+            if item is None:
+                self.reload_packages()
+                item = next((item for item in self.managed_apps if item['package']['id'] == app_id), None)
+                if item is not None:
+                    self.render()
             if item is not None:
                 self.launch(item)
 
@@ -1660,10 +1640,12 @@ class App:
         title = foreground().casefold()
         words = (word.strip().casefold() for word in str(self.cfg['words']).split(','))
         if any(word and word in title for word in words):
+            from focus_alert import FocusAlert
+
             self.last_alert = mono
-            self.alert = FocusAlert(self.window, t, self.stop_alerts)
+            self.alert = FocusAlert(self.window, lambda: remaining(t), self.stop_alerts)
             self.alert.finished.connect(self.focus_alert_finished)
-            self.alert.show()
+            self.alert.present()
             self.tick()
     def stop_alerts(self):
         old=self.cfg['guardian']; self.cfg['guardian']=False
@@ -1744,6 +1726,18 @@ def main():
         app.aboutToQuit.connect(power_events.stop)
         app.aboutToQuit.connect(lambda: app.removeNativeEventFilter(power_events))
         watch_launch_requests(app, LAUNCH_REQUESTS, controller.launch_requested_apps)
+        if installed_source is not None and os.environ.get('CICERON_LIVE_SOURCE'):
+            from live_reload import LiveReload
+
+            reload = LiveReload(os.environ['CICERON_LIVE_SOURCE'], app, os.environ.get('CICERON_LIVE_DIGEST'))
+            def restart_for_source_change():
+                if app.activeModalWidget() is not None:
+                    reload.timer.start()
+                    return
+                dock_panel_open = controller.dock is not None and controller.dock.panel is not None
+                app.exit(76 if controller.window.isVisible() or dock_panel_open else 75)
+
+            reload.restart.connect(restart_for_source_change)
         if '--alternar-centro' in sys.argv:
             controller.toggle_center()
         elif '--abrir' in sys.argv:

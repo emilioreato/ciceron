@@ -1,0 +1,44 @@
+Happy Birthday 1.1.0 para Cicerón
+
+INSTALACIÓN
+Cerrá la versión anterior de Happy Birthday, incluso si está en la
+bandeja. En Cicerón, elegí General → Importar aplicaciones y seleccioná
+Happy-Birthday-1.1.0.ciceron. Después abrí la app una vez desde el dock
+o la tarjeta. Requiere Cicerón con soporte para miniapps Python y el
+Python 3.12 de Windows con Tk y py. No requiere instalar librerías ni
+volver a compilar Cicerón.
+
+USO DIARIO
+Escribí la fecha (8-9-2004 o 8-9) y usá Añadir o Enter. El nombre es
+opcional. Podés añadirlo antes con + Nombre o después con Poner nombre.
+En Almanaque ves doce meses, el día local actual y los cumpleaños
+marcados. Elegí una fecha para ver quién cumple. El año se calcula cada
+vez y se pueden consultar otros años. Si el cumpleaños es el 29 de
+febrero, el aviso y la marca pasan al 28 en años no bisiestos.
+
+Ctrl+N prepara otra fecha. Ctrl+F abre la lista y su buscador. Ctrl+L
+abre el almanaque. En Más están la importación del CSV anterior y las
+apariencias V1, V2 y V3. El vidrio se dibuja dentro de la app.
+
+AVISOS EN WINDOWS
+La app configura el inicio de sesión del usuario al abrirla por
+primera vez desde un Cicerón instalado. X oculta la ventana y deja
+los avisos funcionando en la bandeja. El día se toma de la fecha local
+de Windows y se revisa al iniciar, al reanudar y periódicamente. La
+app registra un aviso cuando la bandeja confirma que se mostró y no
+vuelve a notificar a la misma persona ese día. Depende de que Windows
+permita notificaciones y de una sesión iniciada ese día. Para
+comprobar la configuración, elegí Más → Probar aviso de Windows.
+En Más también se puede desactivar el inicio con Windows o salir y
+pausar los avisos. Si movés Cicerón, abrí la app desde la nueva ruta
+para actualizar la integración.
+
+DATOS
+La versión conserva cumpleanos.json de 1.0.0. Si venís de la app
+original, usá Más → Importar CSV y elegí el data.csv que de verdad
+usabas. En la versión EXE original puede estar en resultado final/
+_internal/. Se omiten duplicados y no se inventan años. No se incluyen
+contactos en el paquete.
+
+Para respaldar o trasladar tu agenda a otro perfil, primero elegí
+Más → Salir y pausar avisos y luego Ajustes → Datos en Cicerón.

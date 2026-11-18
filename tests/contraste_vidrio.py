@@ -2,15 +2,16 @@
 from ctypes import POINTER, byref, wintypes
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QRegion
-from PySide6.QtWidgets import QApplication, QFrame, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QPushButton, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from window_glass import GlassBackdrop
+from window_glass import GlassBackdrop, glass_text_rect
 from edge_dock import EdgeDock
-from windows_glass import CapturePrivacy, bind, client_bounds, user
+from windows_glass import CapturePrivacy, bind, client_bounds, root_window, user, window_at
 
 
 def luminance(color):
@@ -112,6 +113,30 @@ source.fill(QColor('white'))
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
 assert sample(140, 127).lightness() > over_black.lightness() + 50
+label = QLabel('Texto sobre el vidrio', window)
+label.setGeometry(125, 33, 180, 24)
+label.show()
+checkbox = QCheckBox('Opción', window)
+checkbox.setGeometry(125, 61, 130, 22)
+checkbox.show()
+checkbox_text = glass_text_rect(checkbox)
+assert not checkbox_text.isEmpty() and checkbox_text.left() > 0
+text_rect = label.fontMetrics().boundingRect(label.contentsRect(), label.alignment().value, label.text())
+surface = glass_text_rect(label)
+assert surface == text_rect.adjusted(-12, -8, 12, 8)
+position = label.mapTo(window, surface.center())
+result = layer.grabFramebuffer()
+assert contrast(QColor('#f0f2f6'), sample(position.x(), position.y())) >= 4.5
+assert sample(position.x(), label.y() + surface.top() + 4).lightness() < 220
+assert sample(position.x(), 22).lightness() > 220
+painter = QPainter(source)
+for x in range(source.width()):
+    shade = QColor('white' if x % 16 < 8 else 'black')
+    painter.fillRect(x, 0, 1, source.height(), shade)
+painter.end()
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+assert variation(position.y()) < variation(22) * .65, 'Falta el desenfoque tras el texto.'
 window.close()
 
 # Render the actual V2 dock shader against known backgrounds without capturing the desktop.
@@ -126,6 +151,9 @@ app.processEvents()
 assert dock.layer.isValid() and not dock.layer.error, dock.layer.error
 bounds = client_bounds(int(dock.winId()))
 assert bounds is not None
+left, top, width, height = bounds
+edge_y = top + round(dock.edge_hover.geometry().center().y() * height / dock.height())
+assert root_window(window_at(wintypes.POINT(left + width - 1, edge_y)), 2) == int(dock.winId())
 source = QImage(bounds[2], bounds[3], QImage.Format.Format_RGB32)
 
 def dock_pixel(color, light):
@@ -144,6 +172,30 @@ assert dock_pixel('#000000', True).lightness() < 50
 blue = dock_pixel('#1e519e', False)
 assert blue.blue() > blue.green() > blue.red() and blue.blue() > 100, blue.name()
 
+dock.glass_enabled = True
+hwnd = int(dock.winId())
+dock.layer.frame = None
+def center_pixel():
+    frame = dock.layer.grabFramebuffer()
+    center = dock.optic_rect().center() * frame.devicePixelRatio()
+    return frame.pixelColor(round(center.x()), round(center.y()))
+
+provisional = center_pixel()
+dock.layer.handoff_started = 10.0
+with patch('edge_dock.time.monotonic', return_value=10.0):
+    first_frame = dock_pixel('#ffffff', False)
+with patch('edge_dock.time.monotonic', return_value=10.075):
+    intermediate = center_pixel()
+with patch('edge_dock.time.monotonic', return_value=10.2):
+    live = center_pixel()
+assert first_frame == provisional
+endpoints = sorted((provisional.lightness(), live.lightness()))
+assert endpoints[0] < intermediate.lightness() < endpoints[1]
+assert provisional.alpha() < intermediate.alpha() < live.alpha()
+assert int(dock.winId()) == hwnd
+dock.layer.handoff_timer.stop()
+dock.layer.handoff_started = None
+
 dock.using_glass = True
 coverage = []
 for light, ink in ((False, '#ffffff'), (True, '#343434')):
@@ -158,6 +210,10 @@ for light, ink in ((False, '#ffffff'), (True, '#343434')):
     assert {pixel.name() for pixel in pixels if pixel.alpha() == 255} == {ink}
 assert coverage[0] == coverage[1], 'El trazo debe conservar la misma cobertura al cambiar de color.'
 
+dock.pure = True
+background_with_icon = dock_pixel('#dedede', True)
+dock.gear.hide()
+assert dock_pixel('#dedede', True) == background_with_icon
 dock.close()
 
 get_affinity = bind(user, 'GetWindowDisplayAffinity', wintypes.BOOL,
@@ -174,6 +230,7 @@ dock = EdgeDock(QIcon(), lambda: None)
 dock.motion_enabled = False
 dock.show()
 app.processEvents()
+assert dock.layer.isVisible() and dock.layer.isValid()
 assert affinity(dock) == 0x11, 'La flecha plegada debe quedar fuera de la captura.'
 app.setProperty('captureMode', True)
 dock.update_capture_mode()

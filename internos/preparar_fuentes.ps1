@@ -72,6 +72,7 @@ function New-CiceronSourceBundle([string]$Repository, [string]$Output, [string]$
     $before = @(Get-TreeHashes $src -Source; Get-TreeHashes $assets; Get-TreeHashes $extension -Extension)
     New-Item -ItemType Directory -Path $runtime -Force | Out-Null
     Copy-SafeTree -From $src -To (Join-Path $runtime 'src') -SkipTransient
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ejecutar_fuentes.py') -Destination $runtime
     Copy-SafeTree -From $assets -To (Join-Path $runtime 'assets')
     Copy-SafeTree -From $extension -To (Join-Path $Output '00 EXTENSION') -SkipTransient -AtRoot
     $requirements = Join-Path $runtime 'requirements-runtime.txt'

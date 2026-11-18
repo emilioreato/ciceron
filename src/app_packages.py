@@ -28,6 +28,18 @@ DIRNAME = re.compile(r'[0-9a-f]{64}')
 RESERVED = re.compile(r'con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$', re.I)
 SIZE_LIMIT = 1024 ** 3
 PYTHON_VERSION = '3.12'
+# Windows' process creation API can reject a working directory of MAX_PATH length.
+PYTHON_LONG_CWD = """
+import os
+import runpy
+import sys
+
+folder, entry, *args = sys.argv[1:]
+os.chdir(folder)
+sys.path[0] = folder
+sys.argv[:] = [entry, *args]
+runpy.run_path(entry, run_name='__main__')
+"""
 
 _kernel = ctypes.WinDLL('kernel32', use_last_error=True)
 _kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
@@ -517,13 +529,19 @@ class PackageStore:
         if frozen:
             ctypes.windll.kernel32.SetDllDirectoryW(None)
         try:
-            command = (python_command(executable, environment) if python_entrypoint(executable)
-                       else [str(executable)])
+            cwd = root
+            if python_entrypoint(executable):
+                command = python_command(executable, environment)
+                if len(str(root).encode('utf-16-le')) // 2 >= 260:
+                    command = [*command[:-1], '-c', PYTHON_LONG_CWD, str(root), str(executable)]
+                    cwd = self.root.resolve().anchor
+            else:
+                command = [str(executable)]
             with self.data_lease(spec['id'], exclusive=False) as lease:
                 self.save_settings(spec, {})
                 os.set_handle_inheritable(lease, True)
                 startup = subprocess.STARTUPINFO(lpAttributeList={'handle_list': [lease]})
-                process = subprocess.Popen([*command, *spec['args']], cwd=root, env=environment,
+                process = subprocess.Popen([*command, *spec['args']], cwd=cwd, env=environment,
                                            startupinfo=startup, close_fds=True)
             running = [proc for proc in self.running.get(root, ()) if proc.poll() is None]
             self.running[root] = [*running, process]

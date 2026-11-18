@@ -8,7 +8,7 @@ import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from PySide6.QtCore import QEvent, QPoint, QPointF
-from PySide6.QtGui import QKeyEvent, QWheelEvent
+from PySide6.QtGui import QEnterEvent, QKeyEvent, QWheelEvent
 from PySide6.QtTest import QTest
 
 
@@ -95,8 +95,11 @@ with TemporaryDirectory() as temporary:
     center.photo_action.trigger()
     center.capture_control.setChecked(False)
     center.update_tray_actions()
-    assert not module.capture_mode() and app.property('capturePrivate')
-    assert not center.photo_action.isEnabled() and not center.photo_timer.isActive()
+    assert module.capture_mode() and not app.property('capturePrivate')
+    assert center.photo_action.isEnabled() and center.photo_timer.isActive()
+    center.photo_timer.timeout.emit()
+    assert not module.capture_mode() and not center.photo_timer.isActive()
+    assert app.property('capturePrivate')
     saved, _ = module.read(module.CONFIG, {})
     assert saved['include_in_captures'] is False
     center.capture_control.setChecked(True)
@@ -104,6 +107,25 @@ with TemporaryDirectory() as temporary:
     assert not app.property('capturePrivate') and center.photo_action.isEnabled()
     center.glass_control.setChecked(False)
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
+    from app_packages import atomic_json, create_package
+    payload = Path(temporary) / 'miniapp'
+    payload.mkdir()
+    (payload / 'open.pyw').write_text('pass\n', encoding='utf-8')
+    atomic_json(payload / 'ciceron.json', {
+        'schema': 1, 'id': 'local.desde-codigo', 'version': '1.0.0', 'name': 'Desde código',
+        'entrypoint': 'open.pyw', 'python': '3.12',
+    })
+    archive = Path(temporary) / 'miniapp.ciceron'
+    create_package(payload, archive)
+    assert not center.managed_apps
+    module.PackageStore(center.packages.root, center.packages.data).install(archive)
+    with patch.object(center, 'launch') as package_launch:
+        module.request_launch(module.LAUNCH_REQUESTS, 'local.desde-codigo')
+        center.launch_requested_apps()
+    package_launch.assert_called_once_with(center.managed_apps[0])
+    center.packages.remove('local.desde-codigo')
+    center.reload_packages()
+    center.render()
     center.open_center()
     for _ in range(30):
         panel = center.dock.panel
@@ -137,6 +159,13 @@ with TemporaryDirectory() as temporary:
                  if widget.accessibleName() == 'Tema')
     theme.setCurrentIndex(theme.findData('dark'))
     assert center.window.dark
+    timer_dialog = center.goal_dialog(attached=True)
+    date_editor = timer_dialog.findChild(module.QDateEdit).lineEdit()
+    time_editor = timer_dialog.findChild(module.QTimeEdit).lineEdit()
+    assert 'color: #f7f7f7' in date_editor.styleSheet()
+    assert 'color: #f7f7f7' in time_editor.styleSheet()
+    timer_dialog.close()
+    timer_dialog.deleteLater()
     assert module.read(module.CONFIG, {})[0]['theme'] == 'dark'
     assert not any(btn.text() == 'Aplicaciones instaladas de Windows'
                    for btn in center.window.findChildren(module.QPushButton))
@@ -157,6 +186,15 @@ with TemporaryDirectory() as temporary:
         center.launch_requested_apps()
         opened = center.dock.panel
         assert opened.key == tool and opened.isVisible()
+        if tool == 'browser':
+            browser = opened.content
+            title = browser.findChild(module.QLabel, 'title')
+            indicator = browser.status_indicator
+            assert indicator.isVisible()
+            assert indicator.geometry().right() == browser.toggle.geometry().right()
+            assert abs(indicator.geometry().center().y() - title.geometry().center().y()) <= 1
+            dots = indicator.grab().toImage()
+            assert dots.pixelColor(dots.rect().center()).name() == '#e5656c'
         module.request_launch(module.LAUNCH_REQUESTS, tool, builtin=True)
         center.launch_requested_apps()
         assert center.dock.panel is opened
@@ -247,7 +285,7 @@ with TemporaryDirectory() as temporary:
     panel = center.dock.panel
     dock_left = center.dock.x() + center.dock.optic_rect().left()
     panel_right = panel.x() + panel.optic_rect().right()
-    assert 0 <= dock_left - panel_right <= 2
+    assert abs(dock_left - panel_right - (center.dock.PANEL_GAP + 1)) <= 1
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
     center.open_center()
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
@@ -275,6 +313,10 @@ with TemporaryDirectory() as temporary:
     assert center.dock.pure and center.window.glass and center.pages is pages
     assert pages.currentWidget() is active_page and center.dock.panel.content is center.window
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v3'
+    timer_dialog = center.goal_dialog(attached=True)
+    assert 'color: #f7f7f7' in timer_dialog.findChild(module.QDateEdit).lineEdit().styleSheet()
+    timer_dialog.close()
+    timer_dialog.deleteLater()
     chooser.setCurrentIndex(chooser.findData('v1'))
     app.processEvents()
     app.processEvents()
@@ -288,8 +330,21 @@ with TemporaryDirectory() as temporary:
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
     center.dock.panel.close()
     dock = center.dock
+    dock.pure = True
+    dock.progress = (dock.HANDLE_FADE_END + .76) / 2
+    dock.layout_icons()
+    for entry in (*dock.entries, dock.gear):
+        overlap = entry.geometry().intersected(dock.handle.geometry())
+        if not overlap.isEmpty() and entry.isVisible():
+            break
+    else:
+        raise AssertionError('La prueba necesita un icono bajo la flecha durante la transición.')
+    assert dock.childAt(overlap.center()) is entry
     dock.progress = 1
     dock.layout_icons()
+    assert dock.handle.isHidden()
+    assert dock.childAt(entry.geometry().center()) is entry
+    dock.pure = False
     geometry = [entry.geometry() for entry in dock.entries]
     with patch('edge_dock.QCursor') as cursor:
         cursor.pos.return_value = dock.geometry().center()
@@ -298,6 +353,11 @@ with TemporaryDirectory() as temporary:
     effects = dock.entries[2]
     effects.click()
     assert dock.panel.key == 'effects' and dock.panel.isVisible()
+    visual = dock.panel.content
+    title = visual.findChild(module.QLabel, 'heading')
+    assert visual.bubble.x() == visual.particles.x() == title.x()
+    assert visual.bubble.size() == visual.particles.size()
+    assert visual.particles.y() - visual.bubble.geometry().bottom() - 1 == visual.layout().spacing()
     effects.click()
     assert dock.panel is None
     dock.gear.click()
@@ -335,17 +395,31 @@ with TemporaryDirectory() as temporary:
     assert (max(ys) - min(ys) + 1) / ratio < 12
     assert all(image.size() == handle.size() and all(
         image.pixelColor(left + x, top + y) == handle.pixelColor(left + x, top + y)
-        for y in range(height) for x in range(width))
-               for image in handle_images[1:])
-    assert max(handle.pixelColor(left + x, top + y).lightness() for x, y in points) < 100
+        for y in range(height) for x in range(width)) for image in handle_images[1:])
+    arrow_tones = [handle.pixelColor(left + x, top + y).lightness() for x, y in points]
+    assert min(arrow_tones) < 70 and max(arrow_tones) > 225
     dock.theme_dark = True
     dark_handle = dock.grab().toImage()
     assert [dark_handle.pixelColor(left + x, top + y).alpha() for y in range(height)
             for x in range(width)] == [handle.pixelColor(left + x, top + y).alpha()
                                        for y in range(height) for x in range(width)]
-    assert min(dark_handle.pixelColor(left + x, top + y).lightness() for x, y in points) > 180
+    assert [dark_handle.pixelColor(left + x, top + y).lightness() for x, y in points] == arrow_tones
     with patch('edge_dock.QCursor') as cursor:
         cursor.pos.return_value = dock.mapToGlobal(edge)
+        enter = QEnterEvent(QPointF(edge), QPointF(edge), QPointF(cursor.pos.return_value))
+        dock.enterEvent(enter)
+        assert dock.hover_timer.isActive() and dock.progress == dock.transition_to == 0.0
+        assert not dock.animation.isActive() and not dock.glass_timer.isActive()
+        cursor.pos.return_value = dock.mapToGlobal(QPoint(-5, -5))
+        dock.leaveEvent(QEvent(QEvent.Type.Leave))
+        assert not dock.hover_timer.isActive() and not dock.animation.isActive()
+        cursor.pos.return_value = dock.mapToGlobal(edge)
+        dock.enterEvent(enter)
+        dock.hover_timer.timeout.emit()
+        assert not dock.hover_timer.isActive() and dock.transition_to == 1.0
+        dock.leaveEvent(QEvent(QEvent.Type.Leave))
+        assert dock.transition_to == 1.0
+        dock.reset_to_handle()
         dock.reveal()
         assert dock.transition_to == 1.0
         dock.reset_to_handle()
@@ -353,7 +427,17 @@ with TemporaryDirectory() as temporary:
         dock.pure = False
         dock.glass_enabled = True
         dock.handle.click()
-        assert dock.progress == 1.0
+        assert dock.transition_to == 1.0 and dock.progress < 1.0
+        assert dock.animation.isActive()
+        dock.reset_to_handle()
+        with patch('edge_dock.time.monotonic', return_value=20.0) as now:
+            dock.reveal()
+            for time_at_edge in (20.21, 20.23, 20.4, 20.9):
+                now.return_value = time_at_edge
+                dock.update_dock()
+                assert dock.mask().contains(edge) and dock.transition_to == 1.0
+            assert dock.progress == 1.0 and dock.handle.isHidden()
+            assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
         dock.reset_to_handle()
     # The compact arrow needs no continuous desktop capture.
     dock.progress = dock.transition_to = dock.leave_at = 0.0
@@ -370,6 +454,18 @@ with TemporaryDirectory() as temporary:
         dock.release_idle_capture()
         source.close.assert_called_once()
         assert dock.backdrop is None and not dock.glass_idle_timer.isActive()
+    dock.progress = dock.transition_to = 1.0
+    dock.leave_at = 0.0
+    dock.motion_enabled = False
+    dock.animation.stop()
+    with patch('edge_dock.QCursor') as cursor:
+        cursor.pos.return_value = dock.mapToGlobal(module.QPoint(-100, -100))
+        dock.leaveEvent(QEvent(QEvent.Type.Leave))
+        assert dock.animation.isActive()
+        QTest.qWait(round(dock.HIDE_DELAY * 1000) + 20)
+        dock.update_dock()
+    assert dock.progress == 0.0 and not dock.animation.isActive()
+    dock.motion_enabled = True
     dock.animation.start(1000)
     dock.capture_timer.start(1000)
     dock.glass_timer.start(1000)
@@ -377,7 +473,7 @@ with TemporaryDirectory() as temporary:
     assert not dock.isVisible()
     assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
     assert not any(timer.isActive() for timer in
-                   (dock.animation, dock.capture_timer, dock.glass_timer))
+                   (dock.animation, dock.hover_timer, dock.capture_timer, dock.glass_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
     center.toggle_edge_dock_visibility()

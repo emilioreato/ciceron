@@ -8,6 +8,7 @@
     [switch]$DesdeFuentes,
     [switch]$PreferirFuentes,
     [switch]$Empaquetado,
+    [switch]$FuentesVivas,
     [string]$SemillaPython = '',
     [switch]$NoLaunch,
     [switch]$SkipBrowser,
@@ -379,6 +380,9 @@ try {
     if (($Reparar -and $Recuperar) -or ($DesdeFuentes -and ($Reparar -or $Recuperar))) {
         throw 'Elige una sola operación.'
     }
+    if ($FuentesVivas -and (!$DesdeFuentes -or (Split-Path -Parent $installDir) -ne $repositoryRoot)) {
+        throw 'Fuentes vivas requiere instalar desde el código en una carpeta hija del repositorio.'
+    }
     if (!$Reparar -and !$DesdeFuentes -and (!(Test-Path -LiteralPath $source -PathType Leaf) -or
         !(Test-CiceronRuntime $sourceRuntime))) {
         if ($Recuperar) { throw 'No hay una versión anterior completa para recuperar.' }
@@ -473,6 +477,9 @@ try {
         New-CiceronSourceBundle $repositoryRoot $sourceBundle $installDir $SemillaPython
         $source = Join-Path $sourceBundle 'Ciceron.exe'
         $sourceRuntime = Join-Path $sourceBundle '_internal'
+        if ($FuentesVivas) {
+            Set-Content -LiteralPath (Join-Path $sourceRuntime 'fuentes-vivas.txt') -Value '1' -Encoding Ascii
+        }
     } elseif ($Recuperar) {
         Initialize-CiceronEnvironment $installDir $sourceRuntime $SemillaPython
     }
@@ -521,6 +528,10 @@ try {
     Copy-Item -LiteralPath $source -Destination $stage -Force
     if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash) { throw 'La copia de preparación no coincide con el original.' }
     Copy-SafeTree -From $sourceRuntime -To $runtimeStage
+    if ($Recuperar) {
+        $liveMarker = Join-Path $runtimeStage 'fuentes-vivas.txt'
+        if (Test-Path -LiteralPath $liveMarker -PathType Leaf) { Remove-Item -LiteralPath $liveMarker }
+    }
     if (Test-Path -LiteralPath $runtime) {
         $existingRuntime = Get-Item -LiteralPath $runtime -Force
         if (!$existingRuntime.PSIsContainer -or ($existingRuntime.Attributes -band [IO.FileAttributes]::ReparsePoint) -or

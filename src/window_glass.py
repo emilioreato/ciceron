@@ -7,7 +7,8 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton, QWidget
+    QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPlainTextEdit,
+    QPushButton, QStyle, QStyleOptionButton, QWidget
 )
 
 from gpu_lens import EDGE_OPTICS, VERTEX, compile_lens, paint_optic
@@ -83,12 +84,38 @@ void main() {
 '''
 
 
-def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius, opacity=1.0):
+def glass_text_rect(widget):
+    if not isinstance(widget, (QLabel, QCheckBox)) or not widget.text().strip():
+        return QRect()
+    if isinstance(widget, QLabel):
+        margin = widget.margin()
+        area = widget.contentsRect().adjusted(margin, margin, -margin, -margin)
+        flags = widget.alignment().value
+        if widget.wordWrap():
+            flags |= Qt.TextFlag.TextWordWrap.value
+    else:
+        option = QStyleOptionButton()
+        widget.initStyleOption(option)
+        area = widget.style().subElementRect(QStyle.SubElement.SE_CheckBoxContents, option, widget)
+        flags = Qt.AlignmentFlag.AlignVCenter.value | Qt.TextFlag.TextShowMnemonic.value
+    text = widget.fontMetrics().boundingRect(area, flags, widget.text()).intersected(area)
+    return text.adjusted(-12, -8, 12, 8) if not text.isEmpty() else text
+
+
+def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius, opacity=1.0, *,
+                        controls=True, light_text_background=False, glass_mix=1.0,
+                        provisional=(0.0, 0.0, 0.0, 0.0)):
     """Draw the panel and its visible native controls from one desktop texture."""
     owner = layer.parentWidget()
     width, height = layer.width(), layer.height()
     sx, sy = physical[0] / rect.width(), physical[1] / rect.height()
     viewport = GL.glGetIntegerv(GL.GL_VIEWPORT)
+
+    def scissor(clip):
+        GL.glScissor(round(clip.x()*viewport[2]/width),
+                     round((height-clip.y()-clip.height())*viewport[3]/height),
+                     round(clip.width()*viewport[2]/width), round(clip.height()*viewport[3]/height))
+
     def draw(area, corner, mode):
         l, t = area.x(), area.y()
         w, h = area.width(), area.height()
@@ -100,18 +127,25 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
         paint_optic(program, uniforms, w*sx, region, QPointF(), 0,
                     ((x,bottom),(right,bottom),(right,y),(x,y)), body_height=h*sy,
                     panel_radius=min(corner*sx, w*sx/2, h*sy/2),
-                    clear_mode=mode, glass_opacity=opacity)
+                    clear_mode=mode, glass_opacity=opacity, glass_mix=glass_mix, provisional=provisional)
     draw(rect, radius, 1)
+    if not controls:
+        return
     GL.glEnable(GL.GL_SCISSOR_TEST)
+    text_surfaces = []
     try:
         for widget in owner.findChildren(QWidget):
-            if not isinstance(widget, (QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit)):
+            if not isinstance(widget, (QLabel, QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit)):
                 continue
             if widget.window() != owner.window() or not widget.isVisible() or not widget.width() or not widget.height():
                 continue
             if isinstance(widget, QLineEdit) and isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
                 continue
-            area = QRect(widget.mapTo(owner, QPoint()), widget.size())
+            is_text = isinstance(widget, (QLabel, QCheckBox))
+            area = glass_text_rect(widget) if is_text else widget.rect()
+            if area.isEmpty():
+                continue
+            area.translate(widget.mapTo(owner, QPoint()))
             clip = area.intersected(rect.toRect())
             frost = owner.property('frostControls')
             parent = widget.parentWidget()
@@ -119,12 +153,24 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 frost = frost or parent.property('frostControls')
                 clip = clip.intersected(QRect(parent.mapTo(owner, QPoint()), parent.size()))
                 parent = parent.parentWidget()
-            if clip.isEmpty() or isinstance(widget, QCheckBox):
+            if clip.isEmpty():
                 continue
-            GL.glScissor(round(clip.x()*viewport[2]/width),
-                         round((height-clip.y()-clip.height())*viewport[3]/height),
-                         round(clip.width()*viewport[2]/width), round(clip.height()*viewport[3]/height))
+            if is_text:
+                text_surfaces.append((area, clip))
+                continue
+            scissor(clip)
             draw(QRectF(area), 11, 3 if frost else 2)
+        if text_surfaces:
+            blend_was_enabled = GL.glIsEnabled(GL.GL_BLEND)
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE_MINUS_SRC_ALPHA)
+            try:
+                for area, clip in text_surfaces:
+                    scissor(clip)
+                    draw(QRectF(area), 12, 5 if light_text_background else 4)
+            finally:
+                if not blend_was_enabled:
+                    GL.glDisable(GL.GL_BLEND)
     finally:
         GL.glDisable(GL.GL_SCISSOR_TEST)
 
