@@ -247,7 +247,7 @@ with TemporaryDirectory() as temporary:
     panel = center.dock.panel
     dock_left = center.dock.x() + center.dock.optic_rect().left()
     panel_right = panel.x() + panel.optic_rect().right()
-    assert abs(dock_left - panel_right - center.dock.PANEL_GAP) <= 1
+    assert 0 <= dock_left - panel_right <= 2
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v1'
     center.open_center()
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
@@ -312,11 +312,19 @@ with TemporaryDirectory() as temporary:
     ratio = frame.devicePixelRatio()
     tab = dock.handle.geometry().center()
     plate = frame.pixelColor(round(tab.x() * ratio), round((tab.y() - 10) * ratio))
-    assert plate.alpha() > 200 and plate.blue() > plate.red()
+    assert plate.alpha() > 200 and plate.blue() == plate.red()
+    border = frame.pixelColor(round((dock.handle.x() + 3) * ratio), round(tab.y() * ratio))
+    assert border.lightness() > plate.lightness() + 40
     with patch('edge_dock.QCursor') as cursor:
         cursor.pos.return_value = dock.mapToGlobal(edge)
         dock.reveal()
         assert dock.transition_to == 1.0
+        dock.reset_to_handle()
+        dock.theme_dark = True
+        dock.pure = False
+        dock.glass_enabled = True
+        dock.handle.click()
+        assert dock.progress == 1.0
         dock.reset_to_handle()
     # The compact arrow needs no continuous desktop capture.
     dock.progress = dock.transition_to = dock.leave_at = 0.0

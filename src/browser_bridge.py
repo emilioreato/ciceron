@@ -4,7 +4,7 @@ from ctypes import wintypes
 import json
 import os
 from pathlib import Path
-from app_paths import data_root
+from app_paths import data_root, source_installation_root
 from power_state import low_power
 import queue
 import struct
@@ -91,7 +91,8 @@ def send_message(stream, value):
 
 
 def open_ciceron():
-    executable = Path(sys.executable).with_name('Ciceron.exe')
+    installation = source_installation_root() or Path(sys.executable).parent
+    executable = installation / 'Ciceron.exe'
     if not executable.is_file():
         return False
     try:

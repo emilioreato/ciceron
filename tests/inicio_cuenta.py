@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
   assert button_frame.pixelColor(8,button_frame.height()//2).lightness()<110
   button.click()
   picker=a.activePopupWidget(); assert picker is not None and picker.isVisible()
-  assert '#171e30' in picker.styleSheet()
+  assert '#242424' in picker.styleSheet()
   next(x for x in picker.findChildren(m.QPushButton) if x.text()=='Cerrar').click()
   assert not picker.isVisible() and d.isVisible()
   button.click()

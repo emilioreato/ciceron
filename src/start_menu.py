@@ -125,7 +125,9 @@ def pending_launches(folder):
             continue
         tool = request.get('tool')
         app_id = request.get('id')
-        if isinstance(tool, str) and tool in BUILTIN_TOOLS:
+        if request == {'control': 'quit'}:
+            yield 'control', 'quit'
+        elif isinstance(tool, str) and tool in BUILTIN_TOOLS:
             yield 'tool', tool
         elif isinstance(app_id, str) and APP_ID.fullmatch(app_id):
             yield 'package', app_id

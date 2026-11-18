@@ -15,7 +15,7 @@ if errorlevel 1 goto error
 if errorlevel 1 goto error
 copy /y ".salida\CiceronHost.exe" "internos\CiceronHost.exe" >nul
 if errorlevel 1 goto error
-echo Ejecutable actualizado. Usa Instalar.bat para instalarlo.
+echo Ejecutable actualizado. Usa Instalar.bat -Empaquetado para instalarlo.
 pause
 exit /b 0
 :error

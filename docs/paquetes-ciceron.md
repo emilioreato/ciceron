@@ -86,7 +86,7 @@ Cicerón lanza el programa con su carpeta de distribución como directorio de tr
 
 Lee los ajustes al iniciar. Si quieres aplicar cambios mientras la app ya está abierta, vuelve a leer ese archivo desde tu propio código. Usa `CICERON_APP_DATA` para archivos modificables. Cada versión del paquete tiene su propia carpeta de código y recursos.
 
-Si distribuyes Python directamente, Cicerón selecciona un intérprete 3.12 mediante `py -3.12` en la versión instalada. En desarrollo usa el intérprete 3.12 que ejecuta el centro. Los `.pyw` se abren con `pythonw.exe` y los `.py` con `python.exe`. Si falta el intérprete, comprueba `py -3.12 --version`. El arranque de una miniapp usa las dependencias que ya estén disponibles para ese intérprete. Para distribuir una app Python con su runtime, sigue usando un paquete con punto de entrada `.exe`.
+Si distribuyes Python directamente, Cicerón usa el intérprete 3.12 que ejecuta el centro en desarrollo y en la instalación desde fuentes. En el centro autocontenido, selecciona el intérprete externo mediante `py -3.12`. Los `.pyw` se abren con `pythonw.exe` y los `.py` con `python.exe`. Si falta el intérprete, comprueba `py -3.12 --version`. El arranque de una miniapp usa las dependencias que ya estén disponibles para ese intérprete. Para distribuir una app Python con su runtime, sigue usando un paquete con punto de entrada `.exe`.
 
 El manifiesto controla la rueda sobre el icono de Cicerón. Tu ejecutable controla el ratón en su propia ventana. Por ejemplo, puedes declarar un ajuste booleano para «Mantener encima» y aplicarlo al crear la ventana. Puedes hacer lo mismo con el estilo de captura, atajos o modos de puntero. Los permisos de Windows para micrófono, captura y automatización se gestionan al ejecutar la app.
 

@@ -16,6 +16,7 @@ try {
     $local = Join-Path $root 'Local'
     New-Item -ItemType Directory -Force -Path $runtime,$chrome,$appdata,$local,(Join-Path $package 'navegador') | Out-Null
     foreach ($name in @('instalar.ps1','instalar_navegador.ps1','accesos_inicio.ps1','propiedades_acceso.cs',
+                        'preparar_fuentes.ps1','control_fuentes.ps1',
                         'Reparar integracion.bat','Recuperar version anterior.bat','formato-datos.txt')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\internos\$name") -Destination $internal
     }

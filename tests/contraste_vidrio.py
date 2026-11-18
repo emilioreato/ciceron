@@ -87,7 +87,7 @@ for top in (0, card.y()):
     assert readings[0] - readings[2] > 60, (top, readings)
 layer.pure = True
 for x in range(source.width()):
-    shade = QColor('white' if x % 8 < 4 else 'black')
+    shade = QColor('white' if x % 16 < 8 else 'black')
     for y in range(source.height()):
         source.setPixelColor(x, y, shade)
 layer.texture_dirty = True
@@ -105,6 +105,7 @@ source.fill(QColor('black'))
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
 assert sample(140, 45).lightness() < 20
+assert sample(140, 2).lightness() > 20, 'Falta el borde óptico de V3 sobre negro.'
 over_black = sample(140, 127)
 assert contrast(QColor('#202731'), over_black) >= 4.5
 source.fill(QColor('white'))
@@ -136,7 +137,9 @@ def dock_pixel(color, light):
     return frame.pixelColor(round(center.x()), round(center.y()))
 
 dark = dock_pixel('#000000', False)
-assert dark.red() < dark.green() < dark.blue() < 45, dark.name()
+assert dark.red() == dark.green() == dark.blue() < 45, dark.name()
+light_in_dark_mode = dock_pixel('#ffffff', False)
+assert light_in_dark_mode.red() == light_in_dark_mode.green() == light_in_dark_mode.blue()
 assert dock_pixel('#000000', True).lightness() < 50
 blue = dock_pixel('#1e519e', False)
 assert blue.blue() > blue.green() > blue.red() and blue.blue() > 100, blue.name()

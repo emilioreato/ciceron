@@ -8,7 +8,8 @@ try {
     $package=Join-Path $root 'paquete'; $local=Join-Path $root 'local'; $app=Join-Path $root 'appdata'
     $installDir=Join-Path $root 'Aplicacion'
     New-Item -ItemType Directory -Force -Path $package,$local,$app | Out-Null
-    foreach ($file in @('instalar.ps1', 'desinstalar.ps1', 'accesos_inicio.ps1', 'propiedades_acceso.cs')) {
+    foreach ($file in @('instalar.ps1', 'desinstalar.ps1', 'accesos_inicio.ps1', 'propiedades_acceso.cs',
+                        'preparar_fuentes.ps1', 'control_fuentes.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\internos\$file") -Destination $package
     }
     $bundle=Join-Path $package 'Ciceron'; $sourceRuntime=Join-Path $bundle '_internal'

@@ -75,25 +75,27 @@ void main() {
         float depth = (0.975 - edge) * diameter * 0.5;
         vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
-        if (clear_mode > 2.5) {
-            // A wider, separable binomial kernel for Timer's frosted controls.
-            vec2 step_size = 5.0 * sample_scale / extent;
-            vec3 color = vec3(0.0);
-            for (int y = -2; y <= 2; ++y) {
-                float wy = y == 0 ? 0.375 : ((y == -2 || y == 2) ? 0.0625 : 0.25);
-                for (int x = -2; x <= 2; ++x) {
-                    float wx = x == 0 ? 0.375 : ((x == -2 || x == 2) ? 0.0625 : 0.25);
-                    color += texture2D(backdrop, coord + vec2(float(x), float(y)) * step_size).rgb * wx * wy;
-                }
-            }
+        if (clear_mode > 1.5) {
+            // Prefilter the backdrop before the widely spaced Gaussian taps.
+            bool frosted = clear_mode > 2.5;
+            float lod = frosted ? 2.5 : 1.5;
+            vec2 d = (frosted ? 5.0 : 3.2) * sample_scale / extent;
+            vec3 color = texture2D(backdrop, coord, lod).rgb * 0.25;
+            color += (texture2D(backdrop, coord + vec2(d.x, 0.0), lod).rgb
+                    + texture2D(backdrop, coord - vec2(d.x, 0.0), lod).rgb
+                    + texture2D(backdrop, coord + vec2(0.0, d.y), lod).rgb
+                    + texture2D(backdrop, coord - vec2(0.0, d.y), lod).rgb) * 0.125;
+            color += (texture2D(backdrop, coord+d, lod).rgb + texture2D(backdrop, coord-d, lod).rgb
+                    + texture2D(backdrop, coord+vec2(d.x,-d.y), lod).rgb
+                    + texture2D(backdrop, coord+vec2(-d.x,d.y), lod).rgb) * 0.0625;
             float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
-            gl_FragColor = vec4(mix(color, vec3(0.98, 0.99, 1.0), 0.68) * alpha, alpha);
+            color = frosted ? mix(color, vec3(0.99), 0.62) : mix(color, vec3(0.13), 0.66);
+            gl_FragColor = vec4(color * alpha, alpha);
             return;
         }
         if (clear_mode > 0.5) {
             vec2 pixel = sample_scale / extent;
-            // Binomial weights approximate a Gaussian on the button's backdrop.
-            vec2 d = pixel * (clear_mode > 1.5 ? 3.2 : 0.38);
+            vec2 d = pixel * 0.38;
             vec3 color = texture2D(backdrop, coord).rgb * 0.25;
             color += (texture2D(backdrop, coord + vec2(d.x, 0.0)).rgb
                     + texture2D(backdrop, coord - vec2(d.x, 0.0)).rgb
@@ -102,12 +104,13 @@ void main() {
             color += (texture2D(backdrop, coord+d).rgb + texture2D(backdrop, coord-d).rgb
                     + texture2D(backdrop, coord+vec2(d.x,-d.y)).rgb
                     + texture2D(backdrop, coord+vec2(-d.x,d.y)).rgb) * 0.0625;
-            if (clear_mode < 1.5) {
-                vec2 fringe = pixel * normal * 2.2 * bevel;
-                vec2 split = vec2(texture2D(backdrop, coord-fringe).r,
-                                  texture2D(backdrop, coord+fringe).b);
-                color.rb += clamp(split-color.rb, -0.18, 0.18) * bevel;
-            }
+            vec2 fringe = pixel * normal * 2.2 * bevel;
+            vec2 split = vec2(texture2D(backdrop, coord-fringe).r,
+                              texture2D(backdrop, coord+fringe).b);
+            color.rb += clamp(split-color.rb, -0.18, 0.18) * bevel;
+            float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+            float rim = smoothstep(0.975 - 5.2/diameter, 0.975 - 1.5/diameter, edge);
+            color = mix(color, vec3(luminance < 0.55 ? 1.0 : 0.0), rim * 0.22);
             float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
             gl_FragColor = vec4(color*alpha, alpha);
             return;
@@ -116,7 +119,7 @@ void main() {
         vec3 color = texture2D(backdrop, coord, blur).rgb;
         float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
         color = glass_tone < 0.5
-            ? mix(color * min(1.0, 0.41 / max(luma, 0.001)), vec3(0.09, 0.18, 0.34), 0.24)
+            ? mix(color * min(1.0, 0.41 / max(luma, 0.001)), vec3(0.15), 0.24)
             : mix(color, vec3(0.87, 0.92, 1.0),
                   max(0.0, (0.64 - luma) / max(1.0 - luma, 0.001)) * smoothstep(0.10, 0.45, luma));
         if (bevel > 0.0) {

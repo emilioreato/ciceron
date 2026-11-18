@@ -5,14 +5,26 @@ from hashlib import sha256
 from pathlib import Path
 
 
+def source_installation_root():
+    runtime = Path(__file__).resolve().parents[1]
+    if (not getattr(sys, 'frozen', False) and runtime.name == '_internal' and
+            (runtime / 'entorno.txt').is_file()):
+        return runtime.parent
+    return None
+
+
 def development_mode():
-    return not getattr(sys, 'frozen', False) and os.environ.get('CICERON_DEV', '1') == '1'
+    return (not getattr(sys, 'frozen', False) and source_installation_root() is None and
+            os.environ.get('CICERON_DEV', '1') == '1')
 
 
 def application_root():
     """Return the folder containing this installation, independent of drive letter."""
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).resolve().parent
+    installed = source_installation_root()
+    if installed is not None:
+        return installed
     configured = os.environ.get('CICERON_HOME')
     if configured:
         return Path(configured).expanduser().resolve()
@@ -22,7 +34,7 @@ def application_root():
 def data_root():
     """Keep mutable settings and packages beside the portable installation."""
     configured = os.environ.get('CICERON_DATA')
-    if configured and not getattr(sys, 'frozen', False):
+    if configured and not getattr(sys, 'frozen', False) and source_installation_root() is None:
         return Path(configured).expanduser().resolve()
     return application_root() / 'datos'
 

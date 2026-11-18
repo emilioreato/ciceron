@@ -20,7 +20,7 @@ try {
         }
     }
     if ($Instalacion) {
-        foreach ($name in @('instalacion', 'navegador_instalacion', 'portabilidad')) {
+        foreach ($name in @('instalacion', 'navegador_instalacion', 'portabilidad', 'fuentes')) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests/$name.ps1"
             if ($LASTEXITCODE -ne 0) { $failed += $name }
         }

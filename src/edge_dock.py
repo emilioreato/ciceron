@@ -93,6 +93,8 @@ class DockIcon(QToolButton):
         if size > 0:
             area = QRect(round(center.x() - size / 2), round(center.y() - size / 2), size, size)
             light = dock.layer.light if dock.using_glass else not (dock.theme_dark or dock.pure)
+            if dock.theme_dark and not dock.pure:
+                light = False
             icon = self.light_icon if light and self.light_icon is not None else self.icon()
             icon.paint(painter, area)
 
@@ -116,19 +118,15 @@ class DockHandle(QToolButton):
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        tab = QRectF(self.rect()).adjusted(5, 3, -1, -3)
-        if dock.theme_dark or dock.pure:
-            fill, ink = QColor(42, 50, 64, 218), QColor('#acb8cb')
-        else:
-            fill, ink = QColor(224, 230, 239, 220), QColor('#53627a')
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(fill)
+        tab = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        painter.setPen(QPen(QColor(188, 188, 188, 162), 1))
+        painter.setBrush(QColor(40, 40, 40, 223))
         painter.drawRoundedRect(tab, 8, 8)
         center = tab.center()
         arrow = QPainterPath(center + QPointF(2, -4))
         arrow.lineTo(center + QPointF(-2, 0))
         arrow.lineTo(center + QPointF(2, 4))
-        painter.setPen(QPen(ink, 1.5, Qt.PenStyle.SolidLine,
+        painter.setPen(QPen(QColor('#eff0f2'), 1.7, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.drawPath(arrow)
 
@@ -230,7 +228,7 @@ class DockOptics(QOpenGLWidget):
                     appearance=1.0 - .50 * dock.transparency,
                     body_height=physical_height, surface=surface,
                     panel_radius=min(physical_width / 2, physical_height / 2, radius),
-                    glass_tone=float(bool(self.light)),
+                    glass_tone=float(bool(self.light) and not dock.theme_dark),
                     glass_blur=(2.35 if owner is dock else 3.2) - math.log2(captured_width / width),
                     glass_opacity=dock.glass_opacity() if owner is dock else 1.0)
 
@@ -378,7 +376,7 @@ class AttachedPanel(QWidget):
         from center_ui import clear_styles, stylesheet
         if light is None:
             light = not self.dock.theme_dark
-        self.dark = self.dock.pure or (not self.dock.monochrome and not light)
+        self.dark = self.dock.pure or (not self.dock.monochrome and (self.dock.theme_dark or not light))
         line = '255,255,255' if self.dark else '0,0,0'
         monochrome = bool(getattr(self.dock, 'monochrome', False))
         ink = '#f5f6f8' if self.dark else '#202020'
@@ -386,8 +384,8 @@ class AttachedPanel(QWidget):
         menu = '#292b30' if self.dark else '#ffffff'
         diffused = self.dock.glass_enabled and not self.dock.pure
         if self.dark:
-            fill = 'rgba(46,62,89,175)' if diffused else 'rgba(65,68,75,175)'
-            hover = '#415779' if diffused else '#51545c'
+            fill = 'rgba(65,65,65,175)'
+            hover = '#515151'
         else:
             fill = '#ffffff' if monochrome else 'rgba(247,248,250,185)'
             hover = '#e7edf8' if diffused else '#e7e9ed'
@@ -436,7 +434,8 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
         ''' + (clear_styles('QWidget#dockPanel', light and self.using_glass,
                             frost_controls=self.using_glass and self.content is not None and
-                            self.content.property('frostControls')) if self.dock.pure else ''))
+                            self.content.property('frostControls'), live_controls=self.using_glass)
+               if self.dock.pure else ''))
         self.update()
 
     def dialog_finished(self):
@@ -476,8 +475,8 @@ class AttachedPanel(QWidget):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             diffused = self.dock.glass_enabled and not self.dock.pure
             if diffused:
-                base = QColor(23, 35, 59, 213) if self.dark else QColor(225, 235, 251, 213)
-                rim = QColor(168, 194, 236, 130)
+                base = QColor(35, 35, 35, 213) if self.dark else QColor(225, 235, 251, 213)
+                rim = QColor(194, 194, 194, 130) if self.dark else QColor(168, 194, 236, 130)
             else:
                 base = QColor(33, 33, 33, 232) if self.dark else QColor(245, 245, 245, 232)
                 rim = QColor(255, 255, 255, 140)
@@ -579,7 +578,7 @@ class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 4
-    PANEL_GAP = 10
+    PANEL_GAP = 1
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
@@ -608,7 +607,7 @@ class EdgeDock(QWidget):
         self.handle.setAccessibleName('Desplegar Cicerón')
         self.handle.setToolTip('Cicerón')
         self.handle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.handle.clicked.connect(self.reveal)
+        self.handle.clicked.connect(self.reveal_from_handle)
         self.using_glass = False
         self.glass_enabled = True
         self.theme_dark = False
@@ -793,6 +792,13 @@ class EdgeDock(QWidget):
             self.capture()
         self.update_dock()
 
+    def reveal_from_handle(self):
+        if self.theme_dark and self.glass_enabled and not self.pure:
+            self.progress = self.transition_to = 1.0
+            self.layout_icons()
+            self.layer.update()
+        self.reveal()
+
     def update_dock(self):
         now = time.monotonic()
         over_dock = self.mask().contains(self.mapFromGlobal(QCursor.pos()))
@@ -807,7 +813,8 @@ class EdgeDock(QWidget):
             self.transition_to = target
         if self.motion_enabled and previous != target:
             distance = abs(target - self.transition_from)
-            duration = (.22 if target else .32) * max(.45, distance)
+            opening = .12 if self.theme_dark and self.glass_enabled and not self.pure else .22
+            duration = (opening if target else .32) * max(.45, distance)
             t = min(1.0, (now - self.transition_start) / duration)
             self.progress = self.transition_from + (target - self.transition_from) * t * t * (3 - 2 * t)
         else:
@@ -888,14 +895,14 @@ class EdgeDock(QWidget):
         if self.glass_enabled:
             frost = QLinearGradient(rect.topLeft(), rect.topRight())
             dark = self.theme_dark or self.pure
-            near, far = ((38, 55, 82), (20, 32, 52)) if dark else ((185, 206, 238), (151, 173, 210))
+            near, far = ((52, 52, 52), (30, 30, 30)) if dark else ((185, 206, 238), (151, 173, 210))
             frost.setColorAt(0, QColor(*near, round(120 - 120 * self.transparency)))
             frost.setColorAt(1, QColor(*far, round(76 - 90 * self.transparency)))
-            painter.setPen(QPen(QColor(177, 199, 234, 150), 1))
+            painter.setPen(QPen(QColor(199, 199, 199, 150) if dark else QColor(177, 199, 234, 150), 1))
             painter.setBrush(frost)
         else:
-            painter.setPen(QPen(QColor('#69758b' if self.theme_dark else '#a4a4a4'), 1))
-            painter.setBrush(QColor('#222b3b' if self.theme_dark else '#f7f7f7'))
+            painter.setPen(QPen(QColor('#757575' if self.theme_dark else '#a4a4a4'), 1))
+            painter.setBrush(QColor('#2b2b2b' if self.theme_dark else '#f7f7f7'))
         radius = min(self.CORNER_RADIUS, rect.width() / 2)
         painter.drawRoundedRect(rect, radius, radius)
 

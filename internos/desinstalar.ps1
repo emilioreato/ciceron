@@ -5,6 +5,7 @@
     [switch]$Confirmar
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'control_fuentes.ps1')
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
 if (!$InstallDir) { $InstallDir = Join-Path $repositoryRoot 'Aplicacion' }
 $installDir = [IO.Path]::GetFullPath($InstallDir)
@@ -34,13 +35,24 @@ try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (!$locked) { throw 'Ya hay una instalación o desinstalación en curso. Espera a que termine.' }
     $ownedPaths = @($destination,$previousExe,$legacyExe,$legacyNamedExe,(Join-Path $installDir 'GanaLaBatalla.exe'))
+    $registeredRoot = $null
+    $receipt = Join-Path $installDir 'integracion-ciceron.json'
+    if (Test-Path -LiteralPath $receipt -PathType Leaf) {
+        $record = Get-Content -LiteralPath $receipt -Encoding UTF8 -Raw | ConvertFrom-Json
+        if ($record.schema -eq 1 -and $record.root -is [string] -and [IO.Path]::IsPathRooted($record.root)) {
+            $registeredRoot = [IO.Path]::GetFullPath($record.root)
+            $ownedPaths += Join-Path $registeredRoot 'Ciceron.exe'
+        }
+    }
     $running = @(Get-Process -Name 'Ciceron','GanaLaBatalla' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $ownedPaths -contains $_.Path })
+    $sourceRunning = Test-CiceronSourceRunning $installDir
     if (!$Confirmar) {
         $question = 'Se quitarán Cicerón y su inicio automático. La configuración personal se conservará.'
-        if ($running.Count -gt 0) { $question += ' Se cerrará la aplicación y se perderán los cambios no guardados.' }
+        if ($running.Count -gt 0 -or $sourceRunning) { $question += ' Se cerrará la aplicación y se perderán los cambios no guardados.' }
         $answer = Read-Host ($question + ' Escribe SI para continuar')
         if ($answer -cne 'SI') { Write-Host 'Desinstalación cancelada.'; exit 0 }
     }
+    if ($sourceRunning) { Stop-CiceronSource $installDir }
     foreach ($process in $running) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
     foreach ($process in $running) { try { $process.WaitForExit(5000) | Out-Null } catch [System.InvalidOperationException] { } }
     $remaining = @(Get-Process -Name 'Ciceron','GanaLaBatalla' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $ownedPaths -contains $_.Path })
@@ -52,7 +64,7 @@ try {
                 $value = $entry.$runName
                 if ($value -is [string]) {
                     $target = Get-RunExecutable $value
-                    if ($target -in $ownedPaths -or ($runName -eq 'Ciceron' -and [IO.Path]::GetFileName($target) -ieq 'Ciceron.exe' -and !(Test-Path -LiteralPath $target))) { Remove-ItemProperty -LiteralPath $RunKey -Name $runName }
+                    if ($target -in $ownedPaths) { Remove-ItemProperty -LiteralPath $RunKey -Name $runName }
                     else { Write-Warning "Se conservó la entrada $runName porque apunta a otro programa." }
                 } else { Write-Warning "Se conservó la entrada $runName porque tiene un formato desconocido." }
             }
@@ -93,13 +105,13 @@ try {
     $manifest = Join-Path $installDir 'ciceron-native-host.json'
     $previousManifest = Join-Path $previousInstallDir 'ciceron-native-host.json'
     $legacyManifest = Join-Path $legacyInstallDir 'ciceron-native-host.json'
+    $registeredManifest = if ($registeredRoot) { Join-Path $registeredRoot 'ciceron-native-host.json' }
     foreach ($vendor in @('Google\Chrome','Microsoft\Edge')) {
         $key = $NativeRoot + '\' + $vendor + '\NativeMessagingHosts\com.ciceron.browser'
         if (Test-Path -LiteralPath $key) {
             $item = Get-Item -LiteralPath $key
             $registered = $item.GetValue('')
-            if ($registered -in @($manifest,$previousManifest,$legacyManifest) -or
-                ([IO.Path]::GetFileName([string]$registered) -ieq 'ciceron-native-host.json' -and !(Test-Path -LiteralPath $registered))) {
+            if ($registered -and $registered -in @($manifest,$previousManifest,$legacyManifest,$registeredManifest)) {
                 if (!$key.StartsWith('HKCU:\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Raíz del Registro no compatible.' }
                 $writable=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key.Substring(6),$true)
                 try { $writable.DeleteValue('', $false); $empty=$writable.GetValueNames().Count -eq 0 -and $writable.GetSubKeyNames().Count -eq 0 } finally { $writable.Dispose() }

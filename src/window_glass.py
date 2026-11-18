@@ -73,7 +73,8 @@ void main() {
     float reflection = (1.0 - smoothstep(0.0, 1.8, -distance)) * (0.22 + direction * 0.30);
     vec3 body = legible_surface(softened_desktop(refracted), transmission - (window_face ? 0.0 : 0.05));
     if (material > 0.80) {
-        body = mix(body, tint * vec3(0.74, 0.88, 1.0) + vec3(0.0, 0.015, 0.07), 0.33);
+        vec3 active_tint = tint.r < 0.5 ? tint * 0.88 : tint * vec3(0.74, 0.88, 1.0) + vec3(0.0, 0.015, 0.07);
+        body = mix(body, active_tint, 0.33);
     }
     vec3 glass = mix(body, desktop, shoulder * 0.72);
     float alpha = mix(1.0, window_face ? 0.79 * (1.0 - smoothstep(-1.0, 0.0, distance)) : 0.88, floating_panel);
@@ -118,7 +119,7 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 frost = frost or parent.property('frostControls')
                 clip = clip.intersected(QRect(parent.mapTo(owner, QPoint()), parent.size()))
                 parent = parent.parentWidget()
-            if clip.isEmpty() or (frost and isinstance(widget, QCheckBox)):
+            if clip.isEmpty() or isinstance(widget, QCheckBox):
                 continue
             GL.glScissor(round(clip.x()*viewport[2]/width),
                          round((height-clip.y()-clip.height())*viewport[3]/height),
@@ -167,6 +168,7 @@ class GlassBackdrop(QOpenGLWidget):
                             ('backdrop', 'pixels', 'cursor', 'surface', 'tint', 'material',
                              'transparency', 'elapsed', 'floating_panel')}
             self.texture = GL.glGenTextures(1)
+            self.mipmapped = False
             GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
             for parameter, value in (
                 (GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
@@ -265,7 +267,9 @@ class GlassBackdrop(QOpenGLWidget):
         GL.glEnd()
 
     def paintGL(self):
-        GL.glClearColor(.12, .16, .24, float(not self.floating_panel))
+        pure = getattr(self, 'pure', False)
+        base = 0.0 if pure else (0.14 if self.dark else 0.94)
+        GL.glClearColor(base, base, base, float(not pure and not self.floating_panel))
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
         if self.frame is None or self.program is None:
             return
@@ -273,7 +277,8 @@ class GlassBackdrop(QOpenGLWidget):
         GL.glDisable(GL.GL_DEPTH_TEST)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
         width, height = self.frame.width(), self.frame.height()
-        if self.texture_dirty:
+        frame_changed = self.texture_dirty
+        if frame_changed:
             GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
             if self.size_on_gpu == (width, height):
                 GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, width, height,
@@ -283,7 +288,13 @@ class GlassBackdrop(QOpenGLWidget):
                                GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, self.frame.constBits())
                 self.size_on_gpu = (width, height)
             self.texture_dirty = False
-        if getattr(self, 'pure', False):
+        if pure and (frame_changed or not self.mipmapped):
+            GL.glGenerateMipmap(GL.GL_TEXTURE_2D)
+        if pure != self.mipmapped:
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER,
+                               GL.GL_LINEAR_MIPMAP_LINEAR if pure else GL.GL_LINEAR)
+            self.mipmapped = pure
+        if pure:
             draw_clear_material(self, self.clear_program, self.clear_uniforms, QRectF(self.rect()),
                                 (0, 0, 1, 1), (width, height), 19)
             return
@@ -296,7 +307,7 @@ class GlassBackdrop(QOpenGLWidget):
         GL.glUniform1f(self.uniform['elapsed'], time.monotonic() - self.started)
         GL.glUniform1f(self.uniform['transparency'], self.transparency)
         GL.glUniform1f(self.uniform['floating_panel'], float(self.floating_panel))
-        GL.glUniform3f(self.uniform['tint'], *((.075, .105, .17) if self.dark else (.97, .985, 1.0)))
+        GL.glUniform3f(self.uniform['tint'], *((.105, .105, .105) if self.dark else (.97, .985, 1.0)))
         GL.glUniform1f(self.uniform['material'], -1.0)
         self.draw_quad(self.rect())
         for surface, clip, material in self.surfaces():

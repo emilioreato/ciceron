@@ -34,7 +34,7 @@ def dark_mode(theme):
 UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
 
 
-def clear_styles(scope='', light=False, frost_controls=False):
+def clear_styles(scope='', light=False, frost_controls=False, live_controls=False):
     # Keep the shared stylesheet's spacing, target sizes and semantic roles.
     scope = (scope + ' ') if scope else ''
     def rule(selectors, properties):
@@ -47,22 +47,25 @@ def clear_styles(scope='', light=False, frost_controls=False):
         rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
              'background: transparent; border-color: transparent;'),
         rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',
-             'background: rgba(23,29,39,128); border: 1px solid transparent; border-radius: 11px; color: #fafbff;'),
+             'background: rgba(30,30,30,128); border: 1px solid transparent; border-radius: 11px; color: #fafafa;'),
         rule('QPushButton:hover, QPushButton:focus, QPushButton#quiet:hover, QPushButton#primary:hover, QFrame#centerTabs QPushButton#nav:focus',
-             'background: rgba(47,56,70,165); border-color: transparent;'),
+             'background: rgba(56,56,56,165); border-color: transparent;'),
         rule('QPushButton:checked, QPushButton:pressed, QFrame#centerTabs QPushButton#nav:checked',
-             'background: rgba(48,60,78,185); color: white; border-color: transparent;'),
+             'background: rgba(60,60,60,185); color: white; border-color: transparent;'),
         rule('QPushButton:disabled', 'color: #b3b8c2; background: rgba(38,42,48,100);'),
-        rule('QPushButton#destructive', 'background: rgba(23,29,39,128); color: #fafbff; border-color: transparent;'),
-        rule('QCalendarWidget, QCalendarWidget QWidget#qt_calendar_navigationbar, QCalendarWidget QAbstractItemView', 'background: rgba(23,29,39,135); color: white; alternate-background-color: transparent;'),
-        rule('QMenu, QComboBox QAbstractItemView', 'background: #303640; color: #fafbff;'),
+        rule('QPushButton#destructive', 'background: rgba(30,30,30,128); color: #fafafa; border-color: transparent;'),
+        rule('QCalendarWidget, QCalendarWidget QWidget#qt_calendar_navigationbar, QCalendarWidget QAbstractItemView', 'background: rgba(30,30,30,135); color: white; alternate-background-color: transparent;'),
+        rule('QMenu, QComboBox QAbstractItemView', 'background: #363636; color: #fafafa;'),
     )
-    if frost_controls:
+    if live_controls:
+        control_ink = '#202731' if frost_controls else '#f7f7f7'
+        placeholder = '#4a5564' if frost_controls else '#dadada'
+        disabled = '#596374' if frost_controls else '#cdcdcd'
         styles += (
-            rule('QPushButton, QPushButton:hover, QPushButton:pressed, QPushButton:checked, QPushButton#quiet, QPushButton#quiet:hover, QPushButton#primary, QPushButton#primary:hover, QPushButton#destructive, QLineEdit, QAbstractSpinBox',
-                 'background: transparent; color: #202731; placeholder-text-color: #4a5564; border: 1px solid transparent;'),
+            rule(controls + ', QPushButton:hover, QPushButton:pressed, QPushButton:checked, QPushButton#quiet, QPushButton#quiet:hover, QPushButton#primary, QPushButton#primary:hover, QPushButton#more, QPushButton#heroAction, QPushButton#destructive, QFrame#centerTabs QPushButton#nav, QFrame#centerTabs QPushButton#nav:checked, QFrame#appCard QPushButton',
+                 f'background: transparent; color: {control_ink}; placeholder-text-color: {placeholder}; border: 1px solid transparent;'),
             rule('QPushButton:disabled, QPushButton#destructive:disabled, QAbstractSpinBox:disabled',
-                 'background: transparent; color: #596374;'),
+                 f'background: transparent; color: {disabled};'),
             rule('QPushButton:focus, QPushButton#quiet:focus, QPushButton#primary:focus, QLineEdit:focus, QAbstractSpinBox:focus',
                  'border-color: #64758c;'),
         )
@@ -79,16 +82,16 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         surface, highlight, pressed, danger = '#ffffff', '#eeeeee', '#e0e0e0', '#8b3030'
         primary, primary_hover, primary_ink = '#343434', '#252525', '#ffffff'
     elif dark:
-        ink, muted, base, field, stroke, accent = '#fafbff', '#e0e7f5', '#171e30', '#273248', '#8293b3', '#cfdeff'
-        surface = 'rgba(44, 56, 79, 188)' if glass else '#253047'
-        highlight, pressed, danger = '#3a4a69', '#45608c', '#ffb4bd'
-        primary, primary_hover, primary_ink = '#b1caff', '#c8d9ff', '#142543'
+        ink, muted, base, field, stroke, accent = '#fafafa', '#e1e1e1', '#242424', '#363636', '#888888', '#e0e0e0'
+        surface = 'rgba(50, 50, 50, 188)' if glass else '#303030'
+        highlight, pressed, danger = '#474747', '#595959', '#ffb4bd'
+        primary, primary_hover, primary_ink = '#dddddd', '#eeeeee', '#212121'
     else:
         ink, muted, base, field, stroke, accent = '#131e33', '#35415a', '#f0f4fc', '#ffffff', '#8296ba', '#183f82'
         surface = 'rgba(255, 255, 255, 171)' if glass else '#ffffff'
         highlight, pressed, danger = '#eaf1ff', '#dce9ff', '#a12840'
         primary, primary_hover, primary_ink = '#265ebc', '#1c50ab', '#ffffff'
-    rim = 'rgba(198, 220, 255, 80)' if dark else 'rgba(255, 255, 255, 250)'
+    rim = 'rgba(220, 220, 220, 80)' if dark else 'rgba(255, 255, 255, 250)'
     button_fill = (
         f'qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {field},stop:1 {surface})'
         if glass else field
@@ -260,7 +263,8 @@ class LiveMaterial:
         else:
             style = stylesheet(self.dark, self.glass)
             if self.property('pureGlass'):
-                style += clear_styles(frost_controls=live and self.property('frostControls'))
+                style += clear_styles('QWidget#liveWindow' if live else '',
+                                      frost_controls=self.property('frostControls'), live_controls=live)
             self.setStyleSheet(style)
 
     def showEvent(self, event):
@@ -308,14 +312,14 @@ class CenterWindow(QWidget):
             return
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor('#fafafa' if self.monochrome else (
-            '#161e2e' if self.dark else '#edf2fb')))
+            '#222222' if self.dark else '#edf2fb')))
         if not self.glass:
             return
         width, height = self.width(), self.height()
         spots = (
-            (.10, .12, .66, '#233b64' if self.dark else '#b9cef5'),
-            (.94, .10, .70, '#3d3259' if self.dark else '#dcd1f4'),
-            (.83, 1.0, .65, '#1b464c' if self.dark else '#c1e4e8'),
+            (.10, .12, .66, '#3a3a3a' if self.dark else '#b9cef5'),
+            (.94, .10, .70, '#333333' if self.dark else '#dcd1f4'),
+            (.83, 1.0, .65, '#303030' if self.dark else '#c1e4e8'),
         )
         for x, y, radius, color in spots:
             glow = QRadialGradient(QPointF(width * x, height * y), width * radius)

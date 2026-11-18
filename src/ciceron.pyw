@@ -2,7 +2,8 @@
 import ctypes, datetime as dt, json, math, os, sys, time, winreg
 from ctypes import wintypes
 from _ctypes import COMError
-from app_paths import application_root, data_root, development_mode, instance_suffix, resolve_app_path, stored_app_path, windows_appdata_root
+from app_paths import (application_root, data_root, development_mode, instance_suffix,
+                       resolve_app_path, source_installation_root, stored_app_path, windows_appdata_root)
 from app_packages import PACKAGE_EXT, PackageStore, app_tags, fold_search
 from browser_ui import BrowserDialog
 from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
@@ -748,7 +749,7 @@ class App:
         self.status_fields = {}
         for name, title, actions in (
             ('program', 'Instalación de Cicerón', [('Abrir carpeta', self.open_install_folder)] +
-             ([('Reparar integración', self.repair_integration)] if getattr(sys, 'frozen', False) else [])),
+             ([('Reparar integración', self.repair_integration)] if not development_mode() else [])),
             ('shortcut', 'Acceso en el menú Inicio', []),
             ('startup', 'Inicio automático', []),
             ('data', 'Configuración y biblioteca', [('Abrir datos', lambda: self.open_location(DATA))]),
@@ -1182,7 +1183,8 @@ class App:
     def refresh_status(self):
         from browser_bridge import sessions
         install = self.install_dir() / 'Ciceron.exe'
-        running_installed = getattr(sys, 'frozen', False) and Path(sys.executable) == install
+        running_installed = (source_installation_root() is not None or
+                             (getattr(sys, 'frozen', False) and Path(sys.executable) == install))
         installed = install.is_file()
         state = 'Instalado y en ejecución' if installed and running_installed else (
             'Instalado · esta ventana se ejecuta desde otra copia' if installed else
@@ -1290,6 +1292,11 @@ class App:
 
     def launch_requested_apps(self):
         for kind, app_id in pending_launches(LAUNCH_REQUESTS):
+            if kind == 'control':
+                if source_installation_root() is not None:
+                    QApplication.quit()
+                    return
+                continue
             if kind == 'tool':
                 self.open_tool(app_id, from_start=True)
                 continue
@@ -1524,8 +1531,10 @@ class App:
         owned_paths={os.path.normcase(str(install_dir / 'Ciceron.exe'))}
         old_target = startup_target(old_startup)
         own_entry=bool(old_target and os.path.normcase(os.path.abspath(old_target)) in owned_paths)
-        installed_executable=os.path.normcase(os.path.abspath(sys.executable)) in owned_paths
-        can_manage=bool(getattr(sys,'frozen',False)) and installed_executable and (not startup_exists or own_entry)
+        launcher = install_dir / 'Ciceron.exe'
+        installed_executable = (source_installation_root() is not None and launcher.is_file()) or (
+            getattr(sys, 'frozen', False) and os.path.normcase(os.path.abspath(sys.executable)) in owned_paths)
+        can_manage = installed_executable and (not startup_exists or own_entry)
         startup.setChecked(bool(startup_exists and own_entry)); startup.setEnabled(can_manage)
         if not can_manage:
             message=('La entrada de inicio pertenece a otro programa y no se modificará.' if startup_exists and not own_entry
@@ -1535,7 +1544,7 @@ class App:
         def apply_options(result):
             if result != QDialog.DialogCode.Accepted:
                 return
-            desired_startup = startup_command(sys.executable)
+            desired_startup = startup_command(sys.executable if getattr(sys, 'frozen', False) else launcher)
             changed_startup = can_manage and (
                 startup.isChecked() != own_entry or
                 (startup.isChecked() and old_startup != desired_startup))
@@ -1684,6 +1693,7 @@ def main():
         raise ctypes.WinError()
     mutex = kernel.CreateMutexW(None, False, r'Local\Ciceron_Unica_v2' + suffix)
     mutex_status = kernel.GetLastError()
+    source_session = None
     try:
         if not mutex:
             raise ctypes.WinError(mutex_status)
@@ -1694,6 +1704,9 @@ def main():
             elif '--abrir' in sys.argv:
                 kernel.SetEvent(activate)
             return 0
+        installed_source = source_installation_root()
+        if installed_source is not None:
+            source_session = (installed_source / 'centro-fuentes.lock').open('ab')
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ciceron.MiCentro' + suffix)
         app = QApplication(sys.argv)
         app.setWindowIcon(icon())
@@ -1721,6 +1734,8 @@ def main():
             QTimer.singleShot(4000, app.quit)
         return app.exec()
     finally:
+        if source_session is not None:
+            source_session.close()
         if mutex:
             kernel.CloseHandle(mutex)
         kernel.CloseHandle(toggle_center)

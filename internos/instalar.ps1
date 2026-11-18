@@ -5,17 +5,26 @@
     [string]$PreviousRoot = '',
     [switch]$Reparar,
     [switch]$Recuperar,
+    [switch]$DesdeFuentes,
+    [switch]$PreferirFuentes,
+    [switch]$Empaquetado,
+    [string]$SemillaPython = '',
     [switch]$NoLaunch,
     [switch]$SkipBrowser,
     [switch]$CloseRunning
 )
 $ErrorActionPreference = 'Stop'
+if ($PreferirFuentes -and !$Empaquetado -and !$Reparar -and !$Recuperar) { $DesdeFuentes = $true }
+if ($DesdeFuentes -and $Empaquetado) { throw 'Elige entre fuentes y paquete.' }
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'preparar_fuentes.ps1')
+. (Join-Path $PSScriptRoot 'control_fuentes.ps1')
 $bundle = Join-Path $PSScriptRoot 'Ciceron'
 $previousInstallDir = Join-Path $env:LOCALAPPDATA 'Ciceron'
 $previousExe = Join-Path $previousInstallDir 'Ciceron.exe'
 if (!$InstallDir) { $InstallDir = Join-Path $repositoryRoot 'Aplicacion' }
 $installDir = [IO.Path]::GetFullPath($InstallDir)
+$sourceBundle = if ($DesdeFuentes) { Join-Path $installDir ('.fuentes-' + [guid]::NewGuid().ToString('N')) }
 $previousRelease = Join-Path $installDir 'version-anterior'
 $releaseStage = Join-Path $installDir ('.version-' + [guid]::NewGuid().ToString('N'))
 $receipt = Join-Path $installDir 'integracion-ciceron.json'
@@ -145,6 +154,7 @@ function Copy-SafeTree([string]$From, [string]$To, [switch]$LegacyInstall, [swit
     } else { New-Item -ItemType Directory -Path $To | Out-Null }
 
     foreach ($item in Get-ChildItem -LiteralPath $From -Force) {
+        if ($SkipTransient -and ($item.Name -eq '__pycache__' -or $item.Extension -eq '.pyc')) { continue }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "No se migran enlaces ni puntos de montaje: $($item.FullName)" }
         $target = Join-Path $To $item.Name
         if ($LegacyInstall -and $AtRoot -and $item.Name -eq 'paquetes') { continue }
@@ -241,10 +251,11 @@ function Read-Format([string]$Path) {
     return $value
 }
 
-function Get-TreeHashes([string]$Root, [switch]$Extension) {
+function Get-TreeHashes([string]$Root, [switch]$Extension, [switch]$Source) {
     if (!(Test-Path -LiteralPath $Root -PathType Container)) { return }
     foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse -Force | Sort-Object FullName) {
         $relative = $file.FullName.Substring($Root.Length + 1)
+        if ($Source -and ($relative -match '(^|\\)__pycache__\\' -or $file.Extension -eq '.pyc')) { continue }
         if ($relative -eq 'huellas.sha256') { continue }
         if ($Extension -and ($relative -like '_metadata\*' -or $relative -eq 'README.md')) { continue }
         "$relative $((Get-FileHash -LiteralPath $file.FullName).Hash)"
@@ -343,11 +354,12 @@ function Install-PortableCommands {
     if ($Recuperar) { return }
     $toolsDir = Join-Path $installDir 'integracion'
     New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
-    foreach ($file in @('instalar.ps1','instalar_navegador.ps1','accesos_inicio.ps1','propiedades_acceso.cs')) {
+    foreach ($file in @('instalar.ps1','desinstalar.ps1','instalar_navegador.ps1','accesos_inicio.ps1','propiedades_acceso.cs',
+                        'preparar_fuentes.ps1','control_fuentes.ps1','lanzador.cs')) {
         $path = Join-Path $PSScriptRoot $file
         if (Test-Path -LiteralPath $path -PathType Leaf) { Copy-Item -LiteralPath $path -Destination $toolsDir -Force }
     }
-    foreach ($file in @('Reparar integracion.bat','Recuperar version anterior.bat')) {
+    foreach ($file in @('Abrir Ciceron.bat','Desinstalar.bat','Reparar integracion.bat','Recuperar version anterior.bat')) {
         $path = Join-Path $PSScriptRoot $file
         if (Test-Path -LiteralPath $path -PathType Leaf) { Copy-Item -LiteralPath $path -Destination $installDir -Force }
     }
@@ -364,9 +376,11 @@ function Invoke-BrowserIntegration([string[]]$Options) {
 try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (!$locked) { throw 'Ya hay una instalación o desinstalación en curso. Espera a que termine.' }
-    if ($Reparar -and $Recuperar) { throw 'Elige una sola operación.' }
-    if (!$Reparar -and (!(Test-Path -LiteralPath $source -PathType Leaf) -or
-        !(Test-Path -LiteralPath (Join-Path $sourceRuntime 'base_library.zip') -PathType Leaf))) {
+    if (($Reparar -and $Recuperar) -or ($DesdeFuentes -and ($Reparar -or $Recuperar))) {
+        throw 'Elige una sola operación.'
+    }
+    if (!$Reparar -and !$DesdeFuentes -and (!(Test-Path -LiteralPath $source -PathType Leaf) -or
+        !(Test-CiceronRuntime $sourceRuntime))) {
         if ($Recuperar) { throw 'No hay una versión anterior completa para recuperar.' }
         throw 'No se encuentra la compilación completa en internos\Ciceron.'
     }
@@ -418,6 +432,7 @@ try {
 
     if (($Reparar -or $Recuperar) -and !$hadExe) { throw 'No se encuentra Ciceron.exe en la carpeta indicada.' }
     if ($Reparar) {
+        Initialize-CiceronEnvironment $installDir $runtime $SemillaPython
         New-Item -ItemType Directory -Force -Path $menu | Out-Null
         if ($ownShortcut) {
             $tempLink = Join-Path $menu ('.Ciceron-' + [guid]::NewGuid().ToString('N') + '.lnk')
@@ -449,9 +464,21 @@ try {
 
     $ownedPaths = $ownedRunPaths
     $running = @(Get-Process -Name 'Ciceron','GanaLaBatalla' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $ownedPaths -contains $_.Path })
-    if ($running.Count -gt 0 -and !$CloseRunning) {
+    $sourceRunning = Test-CiceronSourceRunning $installDir
+    if (($running.Count -gt 0 -or $sourceRunning) -and !$CloseRunning) {
         $answer = Read-Host 'Para instalar o reinstalar, hay que cerrar Cicerón. Los cambios no guardados se perderán. Escribe SI para continuar'
         if ($answer -cne 'SI') { Write-Host 'Instalación cancelada; no se realizaron cambios.'; exit 0 }
+    }
+    if ($DesdeFuentes) {
+        New-CiceronSourceBundle $repositoryRoot $sourceBundle $installDir $SemillaPython
+        $source = Join-Path $sourceBundle 'Ciceron.exe'
+        $sourceRuntime = Join-Path $sourceBundle '_internal'
+    } elseif ($Recuperar) {
+        Initialize-CiceronEnvironment $installDir $sourceRuntime $SemillaPython
+    }
+    if (Test-CiceronSourceRunning $installDir) {
+        if (!$sourceRunning -and !$CloseRunning) { throw 'Cicerón se abrió mientras se preparaba la instalación. Ciérralo y vuelve a intentarlo.' }
+        Stop-CiceronSource $installDir
     }
     if ($running.Count -gt 0) { Stop-OwnedProcesses -Paths $ownedPaths }
     Stop-OwnedProcesses -Paths @($installDir,$legacyInstallDir) -Hosts
@@ -470,11 +497,10 @@ try {
     $currentFormat = Read-Format $dataFormat
     $newFormat = Read-Format $sourceFormat
     if (!$Recuperar -and $currentFormat -ne $newFormat) { Backup-DataFormat }
-    if (!$Recuperar -and $hadExe -and
-        (Test-Path -LiteralPath (Join-Path $runtime 'base_library.zip') -PathType Leaf)) {
+    if (!$Recuperar -and $hadExe -and (Test-CiceronRuntime $runtime)) {
         $changed = (Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $destination).Hash -or
             $currentFormat -ne $newFormat -or ((Get-TreeHashes $runtime) -join "`n") -cne ((Get-TreeHashes $sourceRuntime) -join "`n")
-        $hostSource = Join-Path $PSScriptRoot 'CiceronHost.exe'
+        $hostSource = Join-Path $(if ($DesdeFuentes) { $sourceBundle } else { $PSScriptRoot }) 'CiceronHost.exe'
         $extensionSource = Join-Path $repositoryRoot 'navegador\extension'
         if (!$SkipBrowser -and (Test-Path -LiteralPath $hostSource -PathType Leaf)) {
             $hash = (Get-FileHash -LiteralPath $hostSource).Hash.Substring(0,16)
@@ -498,7 +524,7 @@ try {
     if (Test-Path -LiteralPath $runtime) {
         $existingRuntime = Get-Item -LiteralPath $runtime -Force
         if (!$existingRuntime.PSIsContainer -or ($existingRuntime.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            !(Test-Path -LiteralPath (Join-Path $runtime 'base_library.zip') -PathType Leaf)) {
+            !(Test-CiceronRuntime $runtime)) {
             throw 'La carpeta de dependencias existente no coincide con una instalación de Cicerón.'
         }
         Move-Item -LiteralPath $runtime -Destination $runtimeBackup
@@ -558,7 +584,8 @@ try {
     }
 
     if (!$Recuperar -and !$SkipBrowser -and (Test-Path -LiteralPath $browserInstaller)) {
-        Invoke-BrowserIntegration @('-PackageRoot',$repositoryRoot)
+        if ($DesdeFuentes) { Invoke-BrowserIntegration @('-BrowserBundle',$sourceBundle) }
+        else { Invoke-BrowserIntegration @('-PackageRoot',$repositoryRoot) }
         if ($browserExit -ne 0) { Write-Warning 'La aplicación está instalada, pero la integración del navegador quedó pendiente. Revisa el mensaje anterior o usa Preparar navegador en Cicerón.' }
     } elseif (!$Recuperar -and !$SkipBrowser) { Write-Warning 'El paquete no incluye la preparación del navegador.' }
 
@@ -636,6 +663,10 @@ try {
     exit 1
 } finally {
     if ($locked) {
+        if ($sourceBundle) {
+            try { Remove-SafeLegacyTree -Path $sourceBundle -ExpectedPath $sourceBundle }
+            catch { Write-Warning "Quedó una copia temporal en $sourceBundle." }
+        }
         try { Remove-SafeLegacyTree -Path $runtimeStage -ExpectedPath $runtimeStage }
         catch { Write-Warning "Quedó una carpeta de preparación: $($_.Exception.Message)" }
         try { Remove-SafeLegacyTree -Path $releaseStage -ExpectedPath $releaseStage }

@@ -1,6 +1,6 @@
 CICERÓN
 
-Para instalar o actualizar, ejecuta Instalar.bat. Si Cicerón está abierto, el instalador te preguntará si puede cerrarlo antes de instalar o reinstalar. Los cambios que no hayas guardado se perderán; puedes cancelar.
+Para instalar o actualizar, comprueba que tengas Python 3.12 y ejecuta Instalar.bat. Si Cicerón está abierto, el instalador te preguntará si puede cerrarlo. Guarda tus cambios o cancela la actualización. Consulta INSTALL.md para mover la carpeta, recuperar una versión o probar cambios desde el código.
 
 Para iniciar Cicerón cuando quieras, haz doble clic en «Abrir Ciceron.bat» o busca «Cicerón» en el menú Inicio. Si ya está funcionando, esto abre su panel. También puedes abrirlo desde el icono junto al reloj de Windows. Si no lo ves, pulsa la flecha ^ de iconos ocultos.
 
@@ -14,11 +14,11 @@ En Ajustes puedes elegir tema claro, oscuro o del sistema y activar o desactivar
 
 Para quitar la aplicación y su entrada de inicio en el Registro, ejecuta Desinstalar.bat y confirma. Si está abierta, se cerrará tras tu confirmación. La configuración personal se conserva. Entradas o accesos que pertenezcan a otros programas no se eliminan.
 
-La carpeta Aplicacion contiene el ejecutable, la extensión y los datos. Para moverla, cierra Cicerón y las miniapps. Traslada Aplicacion completa y abre «Reparar integracion.bat» desde la nueva ubicación.
+La carpeta Aplicacion contiene el lanzador, el código y su entorno local, la extensión y los datos. Para moverla, cierra Cicerón y las miniapps. Traslada Aplicacion completa y abre «Reparar integracion.bat» desde la nueva ubicación.
 
 Si una actualización falla en el uso diario, cierra Cicerón y ejecuta «Recuperar version anterior.bat» desde Aplicacion. Se recupera el programa anterior con sus componentes y se conservan los datos actuales. Consulta DESARROLLO.md para usar un respaldo de datos si cambia el formato.
 
-Si ya habías desactivado el inicio automático desde Cicerón, reinstalarlo conserva esa elección. Al repetir la instalación se reemplaza el ejecutable, incluso si es la misma versión. La desinstalación se puede repetir de forma segura.
+Si ya habías desactivado el inicio automático desde Cicerón, reinstalarlo conserva esa elección. La desinstalación se puede repetir de forma segura.
 
 El contador se coloca en la barra de tareas, inicialmente hacia la izquierda. Arrástralo horizontalmente para situarlo en un hueco; recordará la posición. Un clic abre la configuración. Si Windows no reserva una barra horizontal suficientemente alta (por ejemplo, con ocultación automática o una barra lateral), el contador se oculta para no tapar ventanas y puedes acceder a la aplicación desde la bandeja.
 

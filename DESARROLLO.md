@@ -1,6 +1,6 @@
 # Desarrollo de Cicerón
 
-La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. La distribución de Windows incluye su propio runtime en `Aplicacion\_internal\`. El ejecutable toma `Aplicacion\` como raíz y guarda los datos modificables en `Aplicacion\datos\`.
+La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. El instalador copia el código de la revisión elegida a `Aplicacion\_internal\src\` y prepara las dependencias en `Aplicacion\.entornos\`. Ambos modos de instalación guardan los datos modificables en `Aplicacion\datos\`. [Instalación y actualización diaria](INSTALL.md)
 
 ## Ejecutar desde el código
 
@@ -12,7 +12,7 @@ Para actualizar dependencias ejecuta `scripts\preparar.bat`. Si el entorno se mo
 
 ## Crear e instalar el ejecutable
 
-Las verificaciones normales se hacen desde el código. Si el usuario pide empaquetar una revisión concreta, prepara una copia aislada de esa revisión y ejecuta allí `scripts\Crear EXE.bat`. Los resultados son `internos\Ciceron\Ciceron.exe`, `internos\Ciceron\_internal\` y `internos\CiceronHost.exe`. La instalación diaria es una acción separada. Cuando se autorice, `Instalar.bat` instalará ese paquete en `Aplicacion\`, con la carpeta de datos existente.
+Las verificaciones normales se hacen desde el código. Si el usuario pide un paquete autocontenido de una revisión concreta, prepara una copia aislada y ejecuta allí `scripts\Crear EXE.bat`. Los resultados son `internos\Ciceron\Ciceron.exe`, `internos\Ciceron\_internal\` y `internos\CiceronHost.exe`. Cuando se autorice instalar ese paquete, ejecuta `Instalar.bat -Empaquetado`.
 
 ## Mover la carpeta y reparar la integración
 
@@ -32,7 +32,7 @@ Si una versión antigua necesita el formato anterior, cierra el centro y las min
 
 - `src/`: aplicación Qt. `ciceron.pyw` es el punto de entrada. `edge_dock.py` y `center_ui.py` componen la interfaz. `gpu_lens.py`, `lens_capture.py`, `window_glass.py` y `windows_glass.py` implementan los efectos y la integración con Windows. `app_packages.py` y `package_ui.py` administran las aplicaciones empaquetadas.
 - `scripts/`: preparación del entorno, ejecución y compilación.
-- `internos/`: ejecutable distribuible y scripts del instalador.
+- `internos/`: instalador, reparación, desinstalación y lanzador de Windows. `preparar_fuentes.ps1` prepara el código y el entorno y `control_fuentes.ps1` solicita el cierre ordenado.
 - `navegador/extension/`: fuente de la extensión. El instalador copia la fuente a `Aplicacion\00 EXTENSION\`, que se carga en el navegador. Chromium genera `_metadata/` al cargar la extensión. El archivo `Aplicacion\extension-path.txt` guarda una ruta relativa al directorio de la extensión.
 - `Aplicacion\datos\`: preferencias, lista de aplicaciones, paquetes importados y datos persistentes de las apps. Se mantiene dentro de la instalación y no se borra al desinstalar.
 - `tests/` y `navegador/tests/`: pruebas de escritorio, instalador y extensión.
@@ -42,6 +42,13 @@ Si una versión antigua necesita el formato anterior, cierra el centro y las min
 - `.venv/`, `.compilacion/`, `.salida/`: archivos locales de desarrollo generados al ejecutar los scripts; no se versionan.
 
 Las rutas internas se forman respecto de `Aplicacion\`. El menú Inicio, Run y Native Messaging requieren rutas absolutas administradas por Windows. **Reparar integración** las recrea para la ubicación actual. El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino.
+
+## Ciclo de vida y estado
+
+- Al iniciar, el centro elige el perfil desde su ubicación y recupera la configuración guardada. Los accesos del sistema activan la instancia diaria existente. El lanzador de desarrollo usa otra instancia y otro perfil.
+- Al salir del centro, Qt detiene los temporizadores, desregistra las notificaciones de Windows y libera los efectos. Las miniapps lanzadas en procesos separados siguen su propio ciclo de vida. Ciérralas antes de mover la instalación o de trasladar sus datos.
+- Una miniapp guarda su estado en la carpeta indicada por `CICERON_APP_DATA`. Para actualizar su código, vuelve a importar el paquete con el mismo ID. Declara explícitamente sus archivos persistentes y versiona su formato. Un JSON de recordatorios, por ejemplo, lo interpreta la miniapp. El centro solo valida y traslada su archivo.
+- Programa el trabajo periódico de una app según la tarea. Un recordatorio diario puede comprobar la próxima fecha al arrancar o al reanudar y programar una comprobación para cuando corresponda. Los cierres y suspensiones deben poder interrumpir esa espera y la app debe volver a leer lo guardado al iniciar.
 
 ## Pruebas
 
@@ -59,11 +66,13 @@ Las pruebas de instalación también fuerzan un fallo al actualizar el acceso di
 
 `tests\desarrollo.py` arranca dos procesos de Cicerón desde el código con perfiles distintos y verifica a cuál llega la activación. `tests\portabilidad.ps1` prueba el traslado a una ruta con espacios, la reparación y la recuperación con ejecutables simulados y claves de prueba. `tests\datos.py` prueba dos miniapps Python reales y una exportación selectiva. Los datos y las claves de estas pruebas son temporales.
 
+`tests\fuentes.ps1` instala y abre una copia descartable desde Python, la actualiza, recupera la revisión anterior y prueba el traslado, el puente por stdio y la desinstalación. Usa el entorno de desarrollo como origen de dependencias para poder ejecutarse sin acceso a la red.
+
 Para verificar el inicio y parada del contador, la fecha a medianoche, la hora opcional y el calendario, ejecuta `.venv\Scripts\python.exe tests\inicio_cuenta.py`. La prueba usa datos temporales.
 
 ## Integración del navegador
 
-`navegador/extension` contiene la extensión MV3 y las reglas originales. `src/browser_bridge.py` implementa mensajería nativa por stdio, sin transmitir URL ni contenido de páginas; el ejecutable independiente se empaqueta como `internos/CiceronHost.exe`. `src/browser_ui.py` y `src/browser_setup.py` proporcionan controles y registro por usuario. El identificador de extensión está fijado mediante la clave pública del manifiesto y debe coincidir con el origen permitido en el instalador; publicar una extensión firmada requerirá gestionar una clave de firma y una migración de ID.
+`navegador/extension` contiene la extensión MV3 y las reglas originales. `src/browser_bridge.py` implementa mensajería nativa por stdio, sin transmitir URL ni contenido de páginas. En la instalación desde fuentes, el host de Windows transmite esas mismas tramas al proceso Python. `src/browser_ui.py` y `src/browser_setup.py` proporcionan controles y registro por usuario. El identificador de extensión está fijado mediante la clave pública del manifiesto y debe coincidir con el origen permitido en el instalador. Publicar una extensión firmada requerirá gestionar una clave de firma y una migración de ID.
 
 Pruebas: `node --test navegador\tests\*.test.cjs` y `.venv\Scripts\python.exe tests\browser_bridge.py`, `.venv\Scripts\python.exe tests\browser_ui.py` y `powershell -NoProfile -ExecutionPolicy Bypass -File tests\navegador_instalacion.ps1`. La carga manual de una extensión desempaquetada y su integración real deben verificarse en cada navegador y perfil.
 # Material de las ventanas
