@@ -60,6 +60,11 @@ if os.name == "nt":
     AppendMenu = api(USER, "AppendMenuW", W.BOOL, W.HMENU, W.UINT, C.c_size_t, W.LPCWSTR)
     DestroyMenu = api(USER, "DestroyMenu", W.BOOL, W.HMENU)
     SetForeground = api(USER, "SetForegroundWindow", W.BOOL, W.HWND)
+    WindowProcess = api(USER, "GetWindowThreadProcessId", W.DWORD, W.HWND, C.POINTER(W.DWORD))
+    AllowForeground = api(USER, "AllowSetForegroundWindow", W.BOOL, W.DWORD)
+    WindowStyle = api(USER, "GetWindowLongW", C.c_long, W.HWND, C.c_int)
+    SetPosition = api(USER, "SetWindowPos", W.BOOL, W.HWND, W.HWND,
+                      C.c_int, C.c_int, C.c_int, C.c_int, W.UINT)
     GetCursor = api(USER, "GetCursorPos", W.BOOL, C.POINTER(W.POINT))
     TrackMenu = api(USER, "TrackPopupMenu", W.UINT, W.HMENU, W.UINT,
                     C.c_int, C.c_int, C.c_int, W.HWND, C.c_void_p)
@@ -69,8 +74,23 @@ def activate_existing(data_folder):
     if os.name == "nt":
         name = app_name(data_folder)
         target = FindWindow(name, name)
+        if target:
+            owner = W.DWORD()
+            if WindowProcess(target, C.byref(owner)) and owner.value:
+                AllowForeground(owner.value)
         return bool(target and PostMessage(target, ACTIVATE, 0, 0))
     return False
+
+
+def bring_to_front(hwnd):
+    if os.name != "nt" or SetForeground(hwnd):
+        return
+    flags = 0x0013  # SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+    if WindowStyle(hwnd, -20) & 0x8:  # WS_EX_TOPMOST
+        SetPosition(hwnd, -1, 0, 0, 0, 0, flags)
+    elif SetPosition(hwnd, -1, 0, 0, 0, 0, flags):  # HWND_TOPMOST
+        # Return to the top of the normal band immediately (HWND_NOTOPMOST).
+        SetPosition(hwnd, -2, 0, 0, 0, 0, flags)
 
 
 def ellipsize(value, utf16_units):

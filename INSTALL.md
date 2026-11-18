@@ -23,7 +23,7 @@ La primera instalación prepara las dependencias de `requirements-runtime.txt` e
 
 Para vincular la copia diaria al repo, ejecuta una vez `Instalar.bat -FuentesVivas` con `Aplicacion\` dentro del repositorio. Los cambios guardados en los módulos Python de `src\` reinician el centro automáticamente. Si hay un diálogo modal abierto, espera a que lo cierres. El perfil diario y sus datos permanecen en `Aplicacion\datos\`. Si una edición tiene un error de sintaxis, el proceso actual sigue abierto. Si falla el arranque desde el repo, se utiliza la copia estable instalada y se guarda el error en `datos\recarga-error.log`.
 
-Los cambios al instalador, las dependencias y la extensión del navegador mantienen sus propios pasos de actualización. Si mueves solo `Aplicacion\`, se usa su copia local. **Recuperar versión anterior** activa una revisión fija. También puedes instalar una revisión fija con `Instalar.bat`.
+El instalador conserva el vínculo si vuelves a ejecutarlo desde el repo. Los cambios al instalador, las dependencias y la extensión del navegador mantienen sus propios pasos de actualización. Si mueves solo `Aplicacion\`, se usa su copia local. **Recuperar versión anterior** activa una revisión fija. También puedes instalar una revisión fija con `Instalar.bat -RevisionFija`.
 
 Para probar con otro perfil, usa `scripts\Ejecutar en desarrollo.bat`. Lee los archivos actuales del repositorio y usa `.desarrollo\datos\`. Si ya está abierto, sal de **Cicerón · desarrollo** desde la bandeja y vuelve a lanzarlo.
 

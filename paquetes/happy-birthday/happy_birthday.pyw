@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 import time
+import sys
 import tkinter as tk
 from tkinter import font, messagebox
 
@@ -412,4 +413,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if ui_root := os.environ.get("CICERON_UI_ROOT"):
+        sys.path.append(ui_root)
+        try:
+            from qt_agenda import run
+        except ImportError:
+            main()
+        else:
+            run(data_folder(), instance)
+    else:
+        main()

@@ -92,6 +92,8 @@ El manifiesto controla la rueda sobre el icono de Cicerón. Tu ejecutable contro
 
 ## Instalar, actualizar y desinstalar
 
+Una miniapp Python con ventanas Qt puede usar el material compartido cuando el centro se ejecuta desde fuentes. Si `CICERON_UI_ROOT` está presente, añade esa ruta a `sys.path` y usa `MiniappDialog` de `miniapp_ui` como base de la ventana. El diálogo usa los ajustes de apariencia del centro indicados por `CICERON_UI_CONFIG`. Mantén una alternativa si el centro no proporciona ese módulo. `paquetes/happy-birthday/` contiene un ejemplo con ventana propia y datos portables.
+
 - **Instalar.** Cicerón valida el ZIP y sus rutas, extrae en una carpeta temporal y activa la versión solo cuando la extracción está completa. Abrir la app es una acción separada. El ejecutable usa los permisos de tu cuenta de Windows.
 - **Reimportar.** El mismo ID, versión y contenido deja una sola entrada. Cambiar el contenido con el mismo número produce un error. Una versión inferior a la instalada también produce un error.
 - **Actualizar.** Vuelve a importar un paquete con el mismo ID y una versión superior. El dock y la biblioteca pasan a apuntar a la versión nueva y se conserva la carpeta de datos. Cierra la versión anterior antes de actualizar si la tienes abierta.

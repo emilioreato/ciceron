@@ -78,59 +78,77 @@ class BrowserDialog(GlassDialog):
         self.toggle.clicked.connect(lambda: self.change_enabled(self.next_enabled))
         row.addWidget(self.toggle)
         box.addLayout(row)
-        self.sidebar = QCheckBox('Ocultar barra lateral de X')
-        self.sidebar.clicked.connect(lambda: self.save_selectors())
-        box.addWidget(self.sidebar)
-
-        row = QHBoxLayout()
-        details = QVBoxLayout()
-        details.setSpacing(2)
-        details.addWidget(label('Reglas de X', 'heading'))
-        self.rules_count = label('', 'muted')
-        details.addWidget(self.rules_count)
-        row.addLayout(details, 1)
-        self.edit_rules = QPushButton('Editar…')
-        self.edit_rules.setAccessibleName('Editar reglas personalizadas de X')
-        self.edit_rules.clicked.connect(self.open_rules)
-        row.addWidget(self.edit_rules)
-        box.addLayout(row)
-
-        box.addSpacing(4)
-        box.addWidget(label('Extensión del navegador', 'heading'))
-        row = QHBoxLayout()
-        row.addStretch()
-        folder = QPushButton('Carpeta')
-        folder.setObjectName('quiet')
-        folder.setAccessibleName('Abrir carpeta de extensión')
-        folder.clicked.connect(self.open_folder)
-        row.addWidget(folder)
-        install = QPushButton('Preparar')
-        install.setAccessibleName('Preparar navegador')
-        install.setEnabled(not development_mode())
-        install.clicked.connect(self.prepare_browser)
-        row.addWidget(install)
-        box.addLayout(row)
+        box.addSpacing(6)
+        footer = QHBoxLayout()
+        footer.addStretch()
+        self.options_button = QPushButton('Opciones…')
+        self.options_button.setObjectName('quiet')
+        self.options_button.clicked.connect(self.open_options)
+        footer.addWidget(self.options_button)
         if not attached:
             close = QPushButton('Cerrar')
             close.clicked.connect(self.accept)
-            box.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+            footer.addWidget(close)
+        box.addLayout(footer)
         try:
             self.policy = bridge.load_policy()
-            self.sidebar.setChecked(X_SIDEBAR in self.policy['x_selectors'])
         except (OSError,ValueError,TypeError) as e:
             self.broken = True
             self.policy = dict(bridge.DEFAULT)
-            for widget in (self.toggle, self.sidebar, self.edit_rules):
-                widget.setEnabled(False)
+            self.toggle.setEnabled(False)
             QMessageBox.warning(self,'Configuración del navegador',f'No se pudo leer la configuración. No se sobrescribirá: {e}')
         self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(5000); self.finished.connect(self.timer.stop); self.refresh()
         self.resize(340 if attached else 430, self.sizeHint().height())
 
+    def open_options(self):
+        dialog = GlassDialog(self)
+        dialog.setWindowTitle('Opciones de Bloqueo web')
+        box = QVBoxLayout(dialog)
+        box.setContentsMargins(16, 12, 16, 14)
+        box.setSpacing(10)
+        box.addWidget(label('Reglas de X', 'heading'))
+        sidebar = QCheckBox('Ocultar barra lateral de X')
+        sidebar.setChecked(X_SIDEBAR in self.policy['x_selectors'])
+        sidebar.setEnabled(not self.broken)
+
+        def set_sidebar(checked):
+            if not self.save_selectors(hide_sidebar=checked):
+                sidebar.setChecked(X_SIDEBAR in self.policy['x_selectors'])
+
+        sidebar.clicked.connect(set_sidebar)
+        box.addWidget(sidebar)
+        edit_rules = QPushButton('Editar reglas…')
+        edit_rules.setEnabled(not self.broken)
+        edit_rules.clicked.connect(lambda: self.open_rules(dialog))
+        box.addWidget(edit_rules, alignment=Qt.AlignmentFlag.AlignRight)
+
+        box.addSpacing(8)
+        box.addWidget(label('Extensión del navegador', 'heading'))
+        row = QHBoxLayout()
+        row.addStretch()
+        folder = QPushButton('Abrir carpeta')
+        folder.setObjectName('quiet')
+        folder.setAccessibleName('Abrir carpeta de extensión')
+        folder.clicked.connect(lambda: self.open_folder(dialog))
+        row.addWidget(folder)
+        install = QPushButton('Preparar navegador')
+        install.setEnabled(not development_mode())
+        install.clicked.connect(lambda: self.prepare_browser(dialog))
+        row.addWidget(install)
+        box.addLayout(row)
+        box.addSpacing(4)
+        close = QPushButton('Cerrar')
+        close.clicked.connect(dialog.accept)
+        box.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        dialog.resize(400, dialog.sizeHint().height())
+        dialog.exec()
+        dialog.deleteLater()
+
     def custom_selectors(self):
         return [value for value in self.policy['x_selectors'] if value != X_SIDEBAR]
 
-    def open_rules(self):
-        editor = SelectorDialog(self, self.custom_selectors(), self.save_selectors)
+    def open_rules(self, parent):
+        editor = SelectorDialog(parent, self.custom_selectors(), self.save_selectors)
         editor.exec()
         editor.deleteLater()
 
@@ -156,8 +174,6 @@ class BrowserDialog(GlassDialog):
         self.status.setText(status)
         protecting = active and connected and not (error or syncing or self.broken)
         self.status_indicator.set_status(protecting, status)
-        count = len(self.custom_selectors())
-        self.rules_count.setText(f'{count} reglas' if count != 1 else '1 regla')
         self.next_enabled = not active
         action = 'Activar' if self.next_enabled else 'Desactivar'
         self.toggle.setText(action)
@@ -174,41 +190,40 @@ class BrowserDialog(GlassDialog):
             if hashlib.sha256(phrase.encode('utf-8')).hexdigest()!=PASSPHRASE_HASH:
                 QMessageBox.warning(self,'Pausa Feed','La frase no coincide.'); return
         next_policy=dict(self.policy); next_policy['enabled']=enabled; self.persist(next_policy)
-    def save_selectors(self, values=None):
+    def save_selectors(self, values=None, *, hide_sidebar=None):
         if self.broken:
             return False
         next_policy = dict(self.policy)
         other = self.custom_selectors() if values is None else values
-        next_policy['x_selectors'] = ([X_SIDEBAR] if self.sidebar.isChecked() else []) + [
+        if hide_sidebar is None:
+            hide_sidebar = X_SIDEBAR in self.policy['x_selectors']
+        next_policy['x_selectors'] = ([X_SIDEBAR] if hide_sidebar else []) + [
             value.strip() for value in other if value.strip() and value.strip() != X_SIDEBAR
         ]
-        saved = self.persist(next_policy)
-        if not saved:
-            self.sidebar.setChecked(X_SIDEBAR in self.policy['x_selectors'])
-        return saved
-    def open_folder(self):
+        return self.persist(next_policy)
+    def open_folder(self, parent):
         folder=extension_dir()
-        if not (folder/'manifest.json').is_file(): QMessageBox.warning(self,'Extensión no encontrada','Actualiza Cicerón desde el paquete para copiar la extensión.'); return
+        if not (folder/'manifest.json').is_file(): QMessageBox.warning(parent,'Extensión no encontrada','Actualiza Cicerón desde el paquete para copiar la extensión.'); return
         try: os.startfile(str(folder))
-        except OSError as e: QMessageBox.warning(self,'No se pudo abrir',str(e))
-    def prepare_browser(self):
+        except OSError as e: QMessageBox.warning(parent,'No se pudo abrir',str(e))
+    def prepare_browser(self, parent):
         from browser_setup import prepare, detected
         choices=detected()
         if not choices:
-            QMessageBox.information(self,'Navegadores','No se detectó Chrome, Brave ni Edge. Puedes cargar la extensión manualmente y registrar el puente después.'); return
-        selected,ok=QInputDialog.getItem(self,'Preparar navegador','Elige un navegador:',list(choices),0,False)
+            QMessageBox.information(parent,'Navegadores','No se detectó Chrome, Brave ni Edge. Puedes cargar la extensión manualmente y registrar el puente después.'); return
+        selected,ok=QInputDialog.getItem(parent,'Preparar navegador','Elige un navegador:',list(choices),0,False)
         if not ok: return
         try:
             result=prepare(selected)
         except (OSError,ValueError) as e:
-            QMessageBox.warning(self,'No se pudo preparar',str(e)); return
+            QMessageBox.warning(parent,'No se pudo preparar',str(e)); return
         path=extension_dir()
-        if QMessageBox.question(self,'Un paso en el navegador',f'Puente preparado para {selected}.\n\nSe abrirán la página de extensiones y la carpeta. Activa el modo desarrollador, elige «Cargar descomprimida» y selecciona la carpeta «00 EXTENSION».\n\nDespués desactiva la antigua Pausa Feed para no duplicar sus reglas.\n\n¿Abrir ambas ahora?') == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(parent,'Un paso en el navegador',f'Puente preparado para {selected}.\n\nSe abrirán la página de extensiones y la carpeta. Activa el modo desarrollador, elige «Cargar descomprimida» y selecciona la carpeta «00 EXTENSION».\n\nDespués desactiva la antigua Pausa Feed para no duplicar sus reglas.\n\n¿Abrir ambas ahora?') == QMessageBox.StandardButton.Yes:
             try:
                 os.startfile(str(path))
                 scheme={'Chrome':'chrome://extensions','Brave':'brave://extensions','Edge':'edge://extensions'}[selected]
                 subprocess.Popen([str(choices[selected]),scheme])
-            except OSError as e: QMessageBox.warning(self,'No se pudo abrir',str(e))
+            except OSError as e: QMessageBox.warning(parent,'No se pudo abrir',str(e))
 
 
 class SelectorDialog(GlassDialog):

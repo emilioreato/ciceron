@@ -9,6 +9,7 @@
     [switch]$PreferirFuentes,
     [switch]$Empaquetado,
     [switch]$FuentesVivas,
+    [switch]$RevisionFija,
     [string]$SemillaPython = '',
     [switch]$NoLaunch,
     [switch]$SkipBrowser,
@@ -380,7 +381,13 @@ try {
     if (($Reparar -and $Recuperar) -or ($DesdeFuentes -and ($Reparar -or $Recuperar))) {
         throw 'Elige una sola operación.'
     }
-    if ($FuentesVivas -and (!$DesdeFuentes -or (Split-Path -Parent $installDir) -ne $repositoryRoot)) {
+    if ($FuentesVivas -and $RevisionFija) { throw 'Elige fuentes vivas o revisión fija.' }
+    $insideRepo = (Split-Path -Parent $installDir) -eq $repositoryRoot
+    if ($DesdeFuentes -and $insideRepo -and !$RevisionFija -and
+        (Test-Path -LiteralPath (Join-Path $runtime 'fuentes-vivas.txt') -PathType Leaf)) {
+        $FuentesVivas = $true
+    }
+    if ($FuentesVivas -and (!$DesdeFuentes -or !$insideRepo)) {
         throw 'Fuentes vivas requiere instalar desde el código en una carpeta hija del repositorio.'
     }
     if (!$Reparar -and !$DesdeFuentes -and (!(Test-Path -LiteralPath $source -PathType Leaf) -or

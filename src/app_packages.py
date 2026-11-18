@@ -525,6 +525,10 @@ class PackageStore:
             raise PackageError('La carpeta de datos apunta fuera de Cicerón.')
         environment = dict(os.environ, CICERON_APP_ID=spec['id'], CICERON_APP_DATA=str(data),
                            CICERON_APP_SETTINGS=str(data / 'settings.json'), PYINSTALLER_RESET_ENVIRONMENT='1')
+        ui_root = Path(__file__).resolve().parent
+        if (ui_root / 'miniapp_ui.py').is_file():
+            environment['CICERON_UI_ROOT'] = str(ui_root)
+            environment['CICERON_UI_CONFIG'] = str(self.data.parent / 'config.json')
         frozen = getattr(sys, 'frozen', False)
         if frozen:
             ctypes.windll.kernel32.SetDllDirectoryW(None)

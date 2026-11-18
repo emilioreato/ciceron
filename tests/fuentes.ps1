@@ -95,6 +95,9 @@ try {
     [IO.File]::WriteAllText($liveEntry, $baseline)
     Add-Content -LiteralPath (Join-Path $fixture 'src\ciceron.pyw') -Value '# revision de prueba'
     Install @('-PreferirFuentes','-CloseRunning')
+    if (!(Test-Path -LiteralPath (Join-Path $profile '_internal\fuentes-vivas.txt'))) {
+        throw 'La actualización desactivó el vínculo al repositorio.'
+    }
     if ((Test-CiceronSourceRunning $profile) -or (Get-FileHash -LiteralPath (Join-Path $profile $entry)).Hash -eq $first) {
         throw 'No se cerro el centro o no se activo el codigo nuevo.'
     }

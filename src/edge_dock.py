@@ -114,7 +114,8 @@ class DockHandle(QToolButton):
         dock = self.parentWidget()
         painter = QPainter(self)
         # Layered Windows surfaces ignore pointer hits on fully transparent pixels.
-        painter.fillRect(self.rect(), QColor(255, 255, 255, 1))
+        # The fixed edge strip already paints the outermost pixels.
+        painter.fillRect(self.rect().adjusted(0, 0, -(dock.EDGE_INSET + 1), 0), QColor(255, 255, 255, 1))
         opacity = 1 - min(1.0, dock.progress / dock.HANDLE_FADE_END)
         if opacity <= 0:
             return
@@ -318,6 +319,10 @@ class AttachedPanel(QWidget):
         self.resize_animation.setDuration(180)
         self.resize_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.resize_animation.finished.connect(self.finish_resize)
+        self.resize_wait_timer = QTimer(self)
+        self.resize_wait_timer.setSingleShot(True)
+        self.resize_wait_timer.setInterval(120)
+        self.resize_wait_timer.timeout.connect(self.settle_resize)
         self.open_animation = QPropertyAnimation(self, b'windowOpacity', self)
         self.open_animation.setDuration(155)
         self.open_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -355,14 +360,14 @@ class AttachedPanel(QWidget):
         self.content.ensurePolished()
         self.scroll.verticalScrollBar().setValue(0)
         height = self.content.sizeHint().height() + 2 * self.CONTENT_MARGIN
-        # Keep the panel centered on its dock icon while it expands or retracts.
-        # Holding the old top edge fixed makes the header drift away from the
-        # icon when the advanced section changes the panel height.
-        target = self.dock.panel_geometry(self, height)
+        expand_down = self.isVisible() and self.content.property('expandDown')
+        target = self.dock.panel_geometry(self, height, keep_top=expand_down)
         self.resize_animation.stop()
+        self.resize_wait_timer.stop()
         self.capture_tile = self.pending_geometry = None
-        if not self.isVisible():
+        if not self.isVisible() or not self.dock.motion_enabled:
             self.setGeometry(target)
+            self.finish_resize()
         elif target != self.geometry():
             current = client_bounds(int(self.winId())) if self.using_glass and not capture_mode() else None
             if current is not None:
@@ -377,6 +382,7 @@ class AttachedPanel(QWidget):
                 bottom = max(y + height, target_y + target_height)
                 self.capture_tile = (left, top, right - left, bottom - top)
                 self.pending_geometry = target
+                self.resize_wait_timer.start()
                 self.dock.capture()
             else:
                 self.animate_to(target)
@@ -384,17 +390,38 @@ class AttachedPanel(QWidget):
             self.finish_resize()
 
     def animate_to(self, target):
+        self.resize_wait_timer.stop()
         self.pending_geometry = None
+        if not self.dock.motion_enabled:
+            self.setGeometry(target)
+            self.finish_resize()
+            return
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.resize_animation.setStartValue(self.geometry())
         self.resize_animation.setEndValue(target)
         self.resize_animation.start()
 
     def finish_resize(self):
-        self.capture_tile = None
-        policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff if self.persistent else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        self.resize_wait_timer.stop()
+        self.pending_geometry = self.capture_tile = None
+        policy = (Qt.ScrollBarPolicy.ScrollBarAlwaysOff if self.persistent and self.subpanel is None
+                  else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll.setVerticalScrollBarPolicy(policy)
         self.dock.capture()
+
+    def resize_target(self):
+        if self.pending_geometry is not None:
+            return self.pending_geometry
+        if self.resize_animation.state() == QPropertyAnimation.State.Running:
+            return self.resize_animation.endValue()
+        return None
+
+    def settle_resize(self):
+        target = self.resize_target()
+        if target is not None:
+            self.resize_animation.stop()
+            self.setGeometry(target)
+            self.finish_resize()
 
     def optic_rect(self):
         pad = self.INSET
@@ -519,11 +546,13 @@ class AttachedPanel(QWidget):
             enabled = (self.layer.isValid() and not self.layer.error and
                        apply_capture_affinity(self, live=True))
         if not enabled:
+            self.capture_enabled = False
             apply_capture_affinity(self, live=False)
             self.using_glass = False
             self.layer.hide()
             self.layer.frame = None
             self.layer.light = None
+            self.settle_resize()
             self.apply_glass_tone(None)
             self.update()
         return enabled
@@ -538,6 +567,7 @@ class AttachedPanel(QWidget):
         self.closing = True
         self.open_animation.stop()
         self.resize_animation.stop()
+        self.resize_wait_timer.stop()
         if self.subpanel is not None:
             self.subpanel.reject()
         content, self.content = self.content, None
@@ -620,11 +650,14 @@ class EdgeDock(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle('Cicerón · Dock')
         self.setWindowIcon(icon)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.layer = DockOptics(self)
         self.panel = None
         self.panel_window = None
         self.pending_panel = None
-        self.pending_open_scheduled = False
+        self.pending_open_timer = QTimer(self)
+        self.pending_open_timer.setSingleShot(True)
+        self.pending_open_timer.timeout.connect(self.open_pending_panel)
         self.backdrop = None
         self.last_frames = None
         # Establish the GL composition before the native dock is first shown.
@@ -635,11 +668,9 @@ class EdgeDock(QWidget):
         self.gear.hide()
         self.edge_hover = DockEdgeHover(self)
         self.edge_hover.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.edge_hover.hide()
         self.handle = DockHandle(self)
         self.handle.setAccessibleName('Desplegar Cicerón')
         self.handle.setToolTip('Cicerón')
-        self.handle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.handle.clicked.connect(self.reveal)
         self.using_glass = False
         self.glass_enabled = True
@@ -808,8 +839,7 @@ class EdgeDock(QWidget):
         self.glass_timer.stop()
         if self.backdrop is not None:
             self.glass_idle_timer.start(1200)
-        self.pending_panel = None
-        self.pending_open_scheduled = False
+        self.cancel_pending_panel()
         self.leave_at = self.transition_to = self.progress = 0.0
         self.layout_icons()
         self.layer.update()
@@ -891,16 +921,20 @@ class EdgeDock(QWidget):
             if not self.animation.isActive():
                 self.animation.start(interval)
         if (self.pending_panel is not None and self.progress >= 1.0 and
-                not self.pending_open_scheduled):
-            self.pending_open_scheduled = True
-            QTimer.singleShot(0, self, self.open_pending_panel)
+                not self.pending_open_timer.isActive()):
+            self.pending_open_timer.start(0)
 
     def open_pending_panel(self):
-        self.pending_open_scheduled = False
+        if self.motion_enabled and self.progress < 1.0:
+            return
         request, self.pending_panel = self.pending_panel, None
         if request is None or not self.isVisible() or self.panel is not None:
             return
         self.toggle_panel(*request)
+
+    def cancel_pending_panel(self):
+        self.pending_open_timer.stop()
+        self.pending_panel = None
 
     def layout_icons(self):
         folded = self.progress < self.HANDLE_FADE_END
@@ -911,7 +945,6 @@ class EdgeDock(QWidget):
         rows = self.entries[:self.capacity] + [self.gear]
         icons_visible = self.progress > .76
         self.handle.setVisible(folded)
-        self.edge_hover.setVisible(not folded)
         self.handle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, icons_visible)
         if folded:
             self.handle.raise_()
@@ -932,9 +965,10 @@ class EdgeDock(QWidget):
             if visible and folded:
                 button.raise_()
             button.update()
-        # Keep the last screen pixel over the dock after the inset capsule replaces the arrow.
-        edge = self.handle if folded else self.edge_hover
-        hit_region = region.united(QRegion(edge.geometry()))
+        # Keep the same hit surface while the arrow gives way to the icons.
+        hit_region = region.united(QRegion(self.edge_hover.geometry()))
+        if folded:
+            hit_region = hit_region.united(QRegion(self.handle.geometry()))
         if self.mask() != hit_region:
             self.setMask(hit_region)
         if not self.using_glass:
@@ -1091,9 +1125,9 @@ class EdgeDock(QWidget):
     def toggle_panel(self, key, factory, persistent=False):
         if self.pending_panel is not None:
             if self.pending_panel[0] == key:
-                self.pending_panel = None
-            else:
-                self.pending_panel = (key, factory, persistent)
+                self.cancel_pending_panel()
+                return
+            self.pending_panel = (key, factory, persistent)
             self.reveal()
             return
         previous = self.panel
@@ -1127,9 +1161,11 @@ class EdgeDock(QWidget):
         self.reveal()
 
     def position_panel(self, panel):
+        target = panel.resize_target()
         panel.resize_animation.stop()
-        panel.pending_geometry = panel.capture_tile = None
-        panel.setGeometry(self.panel_geometry(panel, panel.height()))
+        panel.setGeometry(self.panel_geometry(panel, target.height() if target is not None else panel.height()))
+        if target is not None:
+            panel.finish_resize()
 
     def panel_geometry(self, panel, height, keep_top=False):
         if not self.screen:

@@ -39,6 +39,21 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
   if hour: d.findChild(m.QTimeEdit).setTime(QTime(*hour))
   next(x for x in d.findChildren(m.QPushButton) if x.text()=='Guardar y empezar').click()
  def first(d):
+  options=next(x for x in d.findChildren(m.QPushButton) if x.text()=='Opciones')
+  initial_height=d.height()
+  assert options.x()==d.layout().contentsMargins().left()
+  options.click()
+  section=d.findChild(m.QWidget,'timerOptions')
+  assert a.activeModalWidget() is d and section.isVisible() and d.height()>initial_height
+  previous_words=c.cfg['words']
+  section.findChild(m.QLineEdit).setText('prueba sin guardar')
+  next(x for x in section.findChildren(m.QPushButton) if x.text()=='Cancelar').click()
+  assert not section.isVisible() and d.height()==initial_height and c.cfg['words']==previous_words
+  options.click()
+  section=next(x for x in d.findChildren(m.QWidget,'timerOptions') if x.isVisible())
+  section.findChild(m.QLineEdit).setText('prueba guardada')
+  next(x for x in section.findChildren(m.QPushButton) if x.text()=='Guardar opciones').click()
+  assert a.activeModalWidget() is d and not section.isVisible() and c.cfg['words']=='prueba guardada'
   stop=next(x for x in d.findChildren(m.QPushButton) if x.text()=='Detener')
   assert not stop.isEnabled() and stop.objectName()=='destructive'
   assert not d.findChild(m.QTimeEdit).isEnabled()

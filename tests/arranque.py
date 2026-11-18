@@ -41,6 +41,10 @@ with TemporaryDirectory() as temporary:
     module = load_module(temporary)
     app = module.QApplication([])
     app.setQuitOnLastWindowClosed(False)
+    with patch.object(Path, 'open', side_effect=[PermissionError(), Mock()]) as open_lock:
+        with patch.object(module.time, 'sleep'):
+            assert module.open_source_session(Path(temporary)) is not None
+        assert open_lock.call_count == 2
     module.write(module.CONFIG, dict(module.DEFAULT, show_timer=False, guardian=False,
                                      open_center_on_start=True))
 

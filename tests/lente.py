@@ -113,10 +113,12 @@ def run():
             paint.fillRect(gradient.rect(), light)
             paint.end()
             bubble.frame, bubble.frame_dirty = gradient, True
-            bubble.motion = QPointF()
-            resting = bubble.grabFramebuffer()
-            bubble.motion = QPointF(1, 0)
-            entering = bubble.grabFramebuffer()
+            # Compare both frames at the same phase of the decorative ripple.
+            with patch('gpu_lens.time.monotonic', return_value=bubble.started):
+                bubble.motion = QPointF()
+                resting = bubble.grabFramebuffer()
+                bubble.motion = QPointF(1, 0)
+                entering = bubble.grabFramebuffer()
             w, y = entering.width(), entering.height() // 2
             assert any(resting.pixelColor(x, y).green() - entering.pixelColor(x, y).green() > 6
                        for x in range(int(w*.93), int(w*.985))

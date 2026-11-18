@@ -123,6 +123,10 @@ with TemporaryDirectory() as temporary:
         module.request_launch(module.LAUNCH_REQUESTS, 'local.desde-codigo')
         center.launch_requested_apps()
     package_launch.assert_called_once_with(center.managed_apps[0])
+    with patch.object(center, 'launch') as package_launch:
+        icon = next(entry for entry in center.dock.entries if entry.accessibleName() == 'Desde código')
+        icon.click()
+    package_launch.assert_called_once_with(center.managed_apps[0])
     center.packages.remove('local.desde-codigo')
     center.reload_packages()
     center.render()
@@ -186,6 +190,16 @@ with TemporaryDirectory() as temporary:
         center.launch_requested_apps()
         opened = center.dock.panel
         assert opened.key == tool and opened.isVisible()
+        if tool == 'clock':
+            timer = opened.content
+            more = next(button for button in timer.findChildren(module.QPushButton) if button.text() == 'Opciones')
+            initial = opened.geometry()
+            with patch.object(center.dock, 'motion_enabled', False):
+                more.click()
+                assert opened.content is timer and opened.subpanel is None
+                assert opened.y() == initial.y() and opened.height() > initial.height()
+                more.click()
+                assert opened.y() == initial.y() and opened.height() == initial.height()
         if tool == 'browser':
             browser = opened.content
             title = browser.findChild(module.QLabel, 'title')
@@ -370,6 +384,8 @@ with TemporaryDirectory() as temporary:
     dock.keyPressEvent(escape)
     assert escape.isAccepted() and dock.panel is None
     assert dock.isVisible() and dock.handle.isVisible() and dock.progress == 0
+    assert dock.handle.cursor().shape() == dock.cursor().shape() == module.Qt.CursorShape.ArrowCursor
+    assert dock.gear.cursor().shape() == module.Qt.CursorShape.PointingHandCursor
     assert dock.mask().contains(dock.handle.geometry().center())
     edge = module.QPoint(dock.width() - 1, dock.handle.geometry().center().y())
     assert dock.mask().contains(edge)
@@ -436,6 +452,8 @@ with TemporaryDirectory() as temporary:
                 now.return_value = time_at_edge
                 dock.update_dock()
                 assert dock.mask().contains(edge) and dock.transition_to == 1.0
+                assert dock.edge_hover.isVisible() and dock.edge_hover.geometry().contains(edge)
+                assert dock.cursor().shape() == module.Qt.CursorShape.ArrowCursor
             assert dock.progress == 1.0 and dock.handle.isHidden()
             assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
         dock.reset_to_handle()
@@ -466,6 +484,51 @@ with TemporaryDirectory() as temporary:
         dock.update_dock()
     assert dock.progress == 0.0 and not dock.animation.isActive()
     dock.motion_enabled = True
+    dock.set_glass(False)
+    first = Mock(side_effect=module.QWidget)
+    latest = Mock(side_effect=module.QWidget)
+    dock.toggle_panel('clock', first)
+    dock.toggle_panel('clock', first)
+    assert dock.pending_panel is None
+    dock.toggle_panel('clock', first)
+    dock.progress = 1.0
+    dock.update_dock()
+    assert dock.pending_open_timer.isActive()
+    dock.reset_to_handle()
+    assert not dock.pending_open_timer.isActive()
+    dock.toggle_panel('effects', latest)
+    app.processEvents()
+    first.assert_not_called()
+    latest.assert_not_called()
+    assert dock.panel is None and dock.pending_panel[0] == 'effects'
+    dock.progress = 1.0
+    dock.update_dock()
+    app.processEvents()
+    latest.assert_called_once_with()
+    panel = dock.panel
+    assert panel is not None and panel.key == 'effects'
+
+    initial_height = panel.height()
+    with patch('edge_dock.client_bounds', return_value=(0, 0, panel.width(), initial_height)), \
+            patch.object(panel.content, 'sizeHint', return_value=module.QSize(260, initial_height + 30)) as size_hint, \
+            patch.object(dock, 'capture'):
+        panel.using_glass = True
+        panel.fit_content()
+        assert panel.resize_wait_timer.isActive()
+        target = panel.pending_geometry
+        assert target.height() != initial_height
+        QTest.qWait(160)
+        assert panel.geometry() == target and panel.pending_geometry is None and panel.capture_tile is None
+        assert panel.scroll.verticalScrollBarPolicy() == module.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        size_hint.return_value = module.QSize(260, initial_height + 10)
+        dock.motion_enabled = False
+        panel.fit_content()
+        assert panel.height() != target.height()
+        assert panel.resize_target() is None and not panel.resize_wait_timer.isActive()
+    panel.close()
+    dock.reset_to_handle()
+    dock.set_glass(True)
+    dock.motion_enabled = True
     dock.animation.start(1000)
     dock.capture_timer.start(1000)
     dock.glass_timer.start(1000)
@@ -473,7 +536,7 @@ with TemporaryDirectory() as temporary:
     assert not dock.isVisible()
     assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
     assert not any(timer.isActive() for timer in
-                   (dock.animation, dock.hover_timer, dock.capture_timer, dock.glass_timer))
+                   (dock.animation, dock.hover_timer, dock.pending_open_timer, dock.capture_timer, dock.glass_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
     center.toggle_edge_dock_visibility()
