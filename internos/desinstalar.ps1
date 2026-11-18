@@ -17,6 +17,19 @@ $legacyNamedExe = Join-Path $legacyInstallDir 'GanaLaBatalla.exe'
 $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\CiceronInstalacion')
 $locked = $false
+
+function Get-RunExecutable([string]$Value) {
+    $command = $Value.Trim()
+    if ($command.StartsWith('"')) {
+        $end = $command.IndexOf('"', 1)
+        if ($end -lt 0) { return $null }
+        $target = $command.Substring(1, $end - 1)
+    } else {
+        $target = ($command -split '\s+', 2)[0]
+    }
+    return [Environment]::ExpandEnvironmentVariables($target)
+}
+
 try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (!$locked) { throw 'Ya hay una instalación o desinstalación en curso. Espera a que termine.' }
@@ -38,7 +51,7 @@ try {
             if ($null -ne $entry) {
                 $value = $entry.$runName
                 if ($value -is [string]) {
-                    $target = [Environment]::ExpandEnvironmentVariables($value.Trim().Trim('"'))
+                    $target = Get-RunExecutable $value
                     if ($target -in $ownedPaths -or ($runName -eq 'Ciceron' -and [IO.Path]::GetFileName($target) -ieq 'Ciceron.exe' -and !(Test-Path -LiteralPath $target))) { Remove-ItemProperty -LiteralPath $RunKey -Name $runName }
                     else { Write-Warning "Se conservó la entrada $runName porque apunta a otro programa." }
                 } else { Write-Warning "Se conservó la entrada $runName porque tiene un formato desconocido." }

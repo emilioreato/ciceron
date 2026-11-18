@@ -1,10 +1,11 @@
 """Cicerón renders the settings declared by an installed package."""
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (QCheckBox, QDialogButtonBox, QFormLayout, QLineEdit, QPlainTextEdit,
                                QMessageBox, QProgressDialog, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
-from center_ui import GlassDialog, PreferenceBox
+from app_packages import text_setting_limit
+from center_ui import GlassDialog, PreferenceBox, panel
 
 
 def install_packages(parent, store, paths):
@@ -47,13 +48,22 @@ def edit_settings(parent, store, app):
     dialog = GlassDialog(parent)
     dialog.setWindowTitle(f"Configurar {app['name']}")
     layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(16, 12, 16, 14)
+    layout.setSpacing(10)
+    layout.addWidget(panel('title', app['name']))
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     content = QWidget()
     scroll.viewport().setObjectName("pageViewport")
     content.setObjectName("pageContent")
     form = QFormLayout(content)
+    form.setContentsMargins(0, 0, 6, 0)
+    form.setHorizontalSpacing(12)
+    form.setVerticalSpacing(10)
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
     controls = []
+    expanded = 0
     for field in spec['settings']:
         value = current[field['id']]
         type_name = field['type']
@@ -71,16 +81,29 @@ def edit_settings(parent, store, app):
             widget.addItems(field['choices'])
             widget.setCurrentText(value)
             getter = widget.currentText
+        elif field.get('multiline') or '\n' in value:
+            widget = QPlainTextEdit(value)
+            widget.setMinimumHeight(115)
+            getter = widget.toPlainText
+            expanded += 1
         else:
             widget = QLineEdit(value)
-            widget.setMaxLength(512)
+            widget.setMaxLength(text_setting_limit(field))
             getter = widget.text
         controls.append((field['id'], getter))
-        form.addRow(field['label'], widget)
+        title = panel('', field['label'])
+        title.setBuddy(widget)
+        widget.setAccessibleName(field['label'])
+        if isinstance(widget, QPlainTextEdit):
+            form.addRow(title)
+            form.addRow(widget)
+        else:
+            form.addRow(title, widget)
     scroll.setWidget(content)
     layout.addWidget(scroll)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
     buttons.button(QDialogButtonBox.StandardButton.Save).setText('Guardar')
+    buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName('primary')
     buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('Cancelar')
     layout.addWidget(buttons)
     buttons.rejected.connect(dialog.reject)
@@ -94,6 +117,6 @@ def edit_settings(parent, store, app):
             dialog.accept()
 
     buttons.accepted.connect(save)
-    dialog.resize(405, min(505, 98 + 45 * len(controls)))
+    dialog.resize(440, min(540, 106 + 44 * len(controls) + 104 * expanded))
     dialog.exec()
     dialog.deleteLater()

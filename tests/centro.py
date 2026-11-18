@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from PySide6.QtCore import QEvent, QPoint, QPointF
 from PySide6.QtGui import QKeyEvent, QWheelEvent
 from PySide6.QtTest import QTest
@@ -52,20 +52,57 @@ with TemporaryDirectory() as temporary:
     event = kernel.CreateEventW(None, False, False, None)
     assert event
     activated = []
-    watcher = module.watch_activation_event(app, kernel, event, lambda: activated.append(True))
+    watcher = module.watch_activation_event(app, kernel, event, lambda: activated.append(True),
+                                            read_power=lambda: False)
     assert not module.activation_event_signaled(kernel, event)
     kernel.SetEvent(event)
-    QTest.qWait(220)
+    QTest.qWait(350)
     assert activated == [True]
     assert not module.activation_event_signaled(kernel, event)
     watcher.stop()
+    saving = module.watch_activation_event(app, kernel, event, lambda: None, read_power=lambda: True)
+    assert saving.interval() == 1000
+    saving.stop()
     kernel.CloseHandle(event)
     assert center.dock.isVisible() and center.dock.handle.isVisible()
     assert center.dock.panel is None and center.dock.progress == 0.0
+    assert not center.timer.isActive()
+    previous_cfg = center.cfg.copy()
+    center.cfg.update(target=(module.dt.datetime.now() + module.dt.timedelta(hours=2)).isoformat(),
+                      show_timer=True, guardian=True)
+    with patch.object(module, 'foreground', return_value='Editor') as foreground:
+        center.tick()
+        assert center.timer.interval() == 5000
+        center.set_background_power(True)
+        assert 14000 <= center.timer.interval() <= 15000
+        assert foreground.call_count == 1
+    center.cfg = previous_cfg
+    center.set_background_power(False)
+    assert not center.timer.isActive()
     tray_actions = [action.text() for action in center.tray.contextMenu().actions()
                     if not action.isSeparator()]
-    assert tray_actions == ['Ocultar barra lateral', 'Salir']
+    assert tray_actions == [
+        'Ocultar barra lateral', 'Captura de pantalla · 20 segundos', 'Salir'
+    ]
+    center.glass_control.setChecked(True)
     center.update_tray_actions()
+    center.photo_action.trigger()
+    assert module.capture_mode() and center.photo_timer.interval() == 20000
+    assert center.photo_timer.isActive()
+    center.photo_timer.timeout.emit()
+    assert not module.capture_mode() and not center.photo_timer.isActive()
+
+    center.photo_action.trigger()
+    center.capture_control.setChecked(False)
+    center.update_tray_actions()
+    assert not module.capture_mode() and app.property('capturePrivate')
+    assert not center.photo_action.isEnabled() and not center.photo_timer.isActive()
+    saved, _ = module.read(module.CONFIG, {})
+    assert saved['include_in_captures'] is False
+    center.capture_control.setChecked(True)
+    center.update_tray_actions()
+    assert not app.property('capturePrivate') and center.photo_action.isEnabled()
+    center.glass_control.setChecked(False)
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.open_center()
     for _ in range(30):
@@ -188,6 +225,8 @@ with TemporaryDirectory() as temporary:
     center.open_page('settings')
     chooser = next(widget for widget in center.window.findChildren(module.QComboBox)
                    if widget.accessibleName() == 'Versión de la interfaz')
+    center.capture_control.setChecked(False)
+    assert app.property('capturePrivate')
     chooser.setCurrentIndex(chooser.findData('v1'))
     app.processEvents()
     app.processEvents()
@@ -195,6 +234,9 @@ with TemporaryDirectory() as temporary:
     assert center.dock.panel.key == 'settings' and center.dock.panel.content is center.window
     assert center.window.property('dockEmbedded') is True
     assert center.window.monochrome and not center.window.glass and not center.window.dark
+    assert not app.property('capturePrivate') and not center.capture_control.isEnabled()
+    center.update_tray_actions()
+    assert not center.photo_action.isEnabled()
     assert not center.glass_control.isEnabled() and not center.glass_control.isChecked()
     assert not center.theme_control.isEnabled()
     assert 'QLabel#heroTitle { color: #242424; }' in center.dock.panel.styleSheet()
@@ -218,6 +260,8 @@ with TemporaryDirectory() as temporary:
     app.processEvents()
     assert center.dock.isVisible() and center.window.isVisible()
     assert not center.window.monochrome and center.window.dark
+    assert app.property('capturePrivate') and center.capture_control.isEnabled()
+    center.capture_control.setChecked(True)
     assert center.glass_control.isEnabled() and not center.glass_control.isChecked()
     assert center.theme_control.isEnabled()
     assert center.dock.geometry().right() == center.dock.screen.availableGeometry().right()
@@ -278,23 +322,25 @@ with TemporaryDirectory() as temporary:
     dock.progress = dock.transition_to = dock.leave_at = 0.0
     with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'capture') as capture:
         cursor.pos.return_value = dock.geometry().topLeft() - module.QPoint(100, 100)
-        dock.backdrop = object()
+        dock.backdrop = source = Mock(lens=None)
         dock.reveal()
         assert dock.capture_timer.isActive()
         capture.assert_called_once()
         dock.leave_at = 0.0
         dock.update_dock()
         assert not dock.capture_timer.isActive()
-        dock.backdrop = None
+        assert dock.glass_idle_timer.isActive()
+        dock.release_idle_capture()
+        source.close.assert_called_once()
+        assert dock.backdrop is None and not dock.glass_idle_timer.isActive()
     dock.animation.start(1000)
     dock.capture_timer.start(1000)
-    dock.photo_timer.start(1000)
     dock.glass_timer.start(1000)
     center.toggle_edge_dock_visibility()
     assert not dock.isVisible()
     assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
     assert not any(timer.isActive() for timer in
-                   (dock.animation, dock.capture_timer, dock.photo_timer, dock.glass_timer))
+                   (dock.animation, dock.capture_timer, dock.glass_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
     center.toggle_edge_dock_visibility()

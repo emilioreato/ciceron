@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory() as tmp:
             def answer():
                 dialog = app.activeModalWidget()
                 assert dialog is not None
-                boxes = [b for b in dialog.findChildren(module.QCheckBox) if 'iniciar sesión' in b.text()]
+                boxes = [b for b in dialog.findChildren(module.QCheckBox) if 'minimizado con Windows' in b.text()]
                 assert len(boxes) == 1 and boxes[0].isEnabled() == enabled
                 if enabled: boxes[0].setChecked(enable)
                 if change is not None: registry.current = change
@@ -62,7 +62,13 @@ with tempfile.TemporaryDirectory() as tmp:
         # The installed app can turn its own entry on and off.
         registry.current = None; warnings.clear()
         interact(True)
-        assert registry.current == ('"' + installed + '"', registry.REG_SZ)
+        assert registry.current == (module.startup_command(installed), registry.REG_SZ)
+        registry.current = ('"' + installed + '"', registry.REG_SZ)
+        interact(True)
+        assert registry.current == (module.startup_command(installed), registry.REG_SZ)
+        interact(False)
+        assert registry.current is None
+        registry.current = (module.startup_command(installed), registry.REG_SZ)
         interact(False)
         assert registry.current is None
         registry.current = ('"%CICERON_HOME%\\Ciceron.exe"', registry.REG_EXPAND_SZ)

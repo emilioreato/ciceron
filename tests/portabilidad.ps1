@@ -101,7 +101,7 @@ try {
     Invoke-Install $portableInstaller $moved @('-Reparar')
     $dest = Join-Path $moved 'Ciceron.exe'
     $manifest = Join-Path $moved $paths.manifest
-    if ((Get-ItemProperty -LiteralPath $run).Ciceron -ne ('"' + $dest + '"') -or
+    if ((Get-ItemProperty -LiteralPath $run).Ciceron -ne ('"' + $dest + '" --inicio-silencioso') -or
         (Get-ItemProperty -LiteralPath $run).Ajeno -ne 'C:\Otro\app.exe' -or
         (Get-Item -LiteralPath $nativeKey).GetValue('') -ne $manifest -or
         (Get-Item -LiteralPath $alienKey).GetValue('') -ne 'C:\Ajeno\ciceron-native-host.json' -or

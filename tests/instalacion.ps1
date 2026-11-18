@@ -29,6 +29,11 @@ try {
     . (Join-Path $package 'accesos_inicio.ps1')
     $toolDirectory = Join-Path $app 'Microsoft\Windows\Start Menu\Programs\Ciceron'
     $toolShell = New-Object -ComObject WScript.Shell
+    $appShortcutPath = Join-Path $app 'Microsoft\Windows\Start Menu\Programs\Cicerón.lnk'
+    $appShortcut = $toolShell.CreateShortcut($appShortcutPath)
+    if ($appShortcut.TargetPath -ne $dest -or $appShortcut.Arguments -cne '--alternar-centro') {
+        throw 'El acceso de Cicerón no alterna el centro al pulsar su icono'
+    }
     $explorer = New-Object -ComObject Shell.Application
     $toolFolder = $explorer.NameSpace($toolDirectory)
     $toolSpecs = @()
@@ -44,7 +49,7 @@ try {
     if (!(Test-Path -LiteralPath $dest)) { throw 'No se instaló el ejecutable' }
     if ((Get-Content -LiteralPath (Join-Path $installedRuntime 'runtime.marker') -Raw) -ne 'runtime inicial') { throw 'No se instalaron las dependencias' }
     if (!(Test-Path -LiteralPath (Join-Path $installDir 'datos\config.json')) -or (Test-Path -LiteralPath $profile)) { throw 'No se migró el perfil al lado de la aplicación' }
-    if ((Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'"')) { throw 'Registro incorrecto' }
+    if ((Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'" --inicio-silencioso')) { throw 'Registro incorrecto' }
     $guard=New-Object System.Threading.Mutex($false, 'Local\CiceronInstalacion')
     $guardHeld=$guard.WaitOne(0)
     if (!$guardHeld) { throw 'No se pudo preparar la prueba de concurrencia' }
@@ -74,7 +79,7 @@ try {
     New-ItemProperty -Path $key -Name Ciceron -Value '"%LOCALAPPDATA%\Ciceron\Ciceron.exe"' -PropertyType ExpandString -Force | Out-Null
     & powershell.exe -NoProfile -File $install -RunKey $key -InstallDir $installDir -NoLaunch
     if ($LASTEXITCODE -ne 0) { throw 'No se reconoció la ruta de inicio expandible' }
-    if ((Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'"')) { throw 'No se normalizó la ruta expandible' }
+    if ((Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'" --inicio-silencioso')) { throw 'No se normalizó la ruta expandible' }
     Remove-ItemProperty -Path $key -Name Ciceron
     & powershell.exe -NoProfile -File $install -RunKey $key -InstallDir $installDir -NoLaunch
     if ($LASTEXITCODE -ne 0) { throw 'Instalación con inicio desactivado fallida' }
@@ -168,7 +173,7 @@ try {
     if ($mergedConfig.theme -ne 'system' -or $mergedConfig.contador -ne 'examen' -or $mergedConfig.'solo-nuevo' -ne 'conservar') { throw 'La combinación de configuración no conservó el perfil actual y los datos antiguos' }
     if (Test-Path -LiteralPath (Join-Path $migratedProfile 'navegadores-activos')) { throw 'Se migraron archivos temporales de sesiones del navegador' }
     if ((Test-Path -LiteralPath $oldInstall) -or (Test-Path -LiteralPath $oldProfile)) { throw 'Quedó la carpeta antigua después de migrar' }
-    if ($null -ne (Get-ItemProperty -Path $key -Name GanaLaBatalla -ErrorAction SilentlyContinue) -or (Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'"')) { throw 'No se migró la entrada de inicio' }
+    if ($null -ne (Get-ItemProperty -Path $key -Name GanaLaBatalla -ErrorAction SilentlyContinue) -or (Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'" --inicio-silencioso')) { throw 'No se migró la entrada de inicio' }
     $movedInstallDir=Join-Path $root 'reubicado\Aplicacion'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $movedInstallDir) | Out-Null
     Move-Item -LiteralPath $installDir -Destination $movedInstallDir
@@ -178,7 +183,7 @@ try {
     $movedDataFile=Join-Path $installDir 'datos\paquetes\prueba\aplicacion.dat'
     & powershell.exe -NoProfile -File $install -RunKey $key -InstallDir $installDir -NoLaunch -SkipBrowser
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $movedDataFile) -or
-        (Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'"')) { throw 'La reubicación no actualizó el acceso ni conservó los datos' }
+        (Get-ItemProperty -Path $key -Name Ciceron).Ciceron -ne ('"'+$dest+'" --inicio-silencioso')) { throw 'La reubicación no actualizó el acceso ni conservó los datos' }
     foreach ($spec in $toolSpecs) {
         $file = $toolFolder.ParseName([IO.Path]::GetFileName($spec.Path))
         if (!$file -or !(Test-CiceronToolShortcut $toolShell $file.Path $spec.ToolId $dest)) { throw 'La reubicación dejó un acceso interno apuntando al destino anterior' }

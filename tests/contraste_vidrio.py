@@ -1,14 +1,16 @@
 """Measure the OpenGL material over black and white desktop pixels."""
+from ctypes import POINTER, byref, wintypes
 from pathlib import Path
 import sys
 
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QRegion
 from PySide6.QtWidgets import QApplication, QFrame, QPushButton, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from window_glass import GlassBackdrop
 from edge_dock import EdgeDock
-from windows_glass import client_bounds
+from windows_glass import CapturePrivacy, bind, client_bounds, user
 
 
 def luminance(color):
@@ -95,6 +97,20 @@ def variation(y):
     return max(values) - min(values)
 assert variation(45) > 180, 'V3 pierde la transparencia en el fondo.'
 assert variation(127) < variation(45) * .65, 'Falta el desenfoque dentro del botón V3.'
+regular_variation = variation(127)
+window.setProperty('frostControls', True)
+result = layer.grabFramebuffer()
+assert variation(127) < regular_variation, 'El desenfoque de Timer debe suavizar más el fondo.'
+source.fill(QColor('black'))
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+assert sample(140, 45).lightness() < 20
+over_black = sample(140, 127)
+assert contrast(QColor('#202731'), over_black) >= 4.5
+source.fill(QColor('white'))
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+assert sample(140, 127).lightness() > over_black.lightness() + 50
 window.close()
 
 # Render the actual V2 dock shader against known backgrounds without capturing the desktop.
@@ -124,5 +140,73 @@ assert dark.red() < dark.green() < dark.blue() < 45, dark.name()
 assert dock_pixel('#000000', True).lightness() < 50
 blue = dock_pixel('#1e519e', False)
 assert blue.blue() > blue.green() > blue.red() and blue.blue() > 100, blue.name()
+
+dock.using_glass = True
+coverage = []
+for light, ink in ((False, '#ffffff'), (True, '#343434')):
+    dock.layer.light = light
+    icon = QImage(dock.gear.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    icon.fill(0)
+    painter = QPainter(icon)
+    dock.gear.render(painter, QPoint(), QRegion(), QWidget.RenderFlag(0))
+    painter.end()
+    pixels = [icon.pixelColor(x, y) for y in range(icon.height()) for x in range(icon.width())]
+    coverage.append([pixel.alpha() for pixel in pixels])
+    assert {pixel.name() for pixel in pixels if pixel.alpha() == 255} == {ink}
+assert coverage[0] == coverage[1], 'El trazo debe conservar la misma cobertura al cambiar de color.'
+
 dock.close()
+
+get_affinity = bind(user, 'GetWindowDisplayAffinity', wintypes.BOOL,
+                    wintypes.HWND, POINTER(wintypes.DWORD))
+
+
+def affinity(widget):
+    value = wintypes.DWORD()
+    assert get_affinity(int(widget.winId()), byref(value)), widget.windowTitle()
+    return value.value
+
+
+dock = EdgeDock(QIcon(), lambda: None)
+dock.motion_enabled = False
+dock.show()
+app.processEvents()
+assert affinity(dock) == 0x11, 'La flecha plegada debe quedar fuera de la captura.'
+app.setProperty('captureMode', True)
+dock.update_capture_mode()
+assert affinity(dock) == 0x11
+dock.toggle_panel('clock', QWidget)
+app.processEvents()
+panel = dock.panel
+assert panel is not None and panel.isVisible()
+assert affinity(dock) == affinity(panel) == 0
+assert dock.backdrop is None and not dock.capture_timer.isActive()
+assert not panel.capture_enabled
+dock.dismiss_inactive_panel()
+assert dock.panel is panel
+app.setProperty('captureMode', False)
+dock.update_capture_mode()
+if dock.backdrop is not None:
+    assert affinity(dock) == affinity(panel) == 0x11
+    assert dock.capture_timer.isActive()
+
+privacy = CapturePrivacy(app)
+privacy.set_private(True)
+count = QWidget()
+count.setWindowTitle('Timer')
+count.show()
+app.processEvents()
+assert affinity(count) == 0x11
+count.hide()
+privacy.set_private(False)
+count.show()
+app.processEvents()
+assert affinity(count) == 0
+dock.monochrome = True
+dock.set_glass(False)
+assert affinity(dock) == affinity(panel) == affinity(count) == 0
+assert dock.backdrop is None and not panel.capture_enabled
+count.close()
+dock.shutdown()
+print('Captura: exclusión de flecha, visibilidad de barra y panel, y preferencia de Timer verificadas en Win32.')
 print(f'Vidrio: contraste mínimo {minimum:.2f}:1 en claro y oscuro contra blanco y negro.')

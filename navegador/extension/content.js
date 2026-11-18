@@ -307,37 +307,66 @@
 
   document.addEventListener("click", rememberSearchChoice, true);
   document.addEventListener("auxclick", rememberSearchChoice, true);
-  window.addEventListener("popstate", () => setTimeout(enforce, 0));
-  window.addEventListener("hashchange", () => setTimeout(enforce, 0));
-  document.addEventListener("yt-navigate-finish", () => setTimeout(enforce, 0));
-
-  // Cheap URL watcher. No whole-page MutationObserver: YouTube mutates the DOM constantly.
-  setInterval(() => {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      enforce();
-    }
-  }, 250);
-
-  function start() {
-    ensureStyle();
-    enforce();
+  let routePending = false;
+  function routeChanged() {
+    if (!enabled || location.href === lastHref || routePending) return;
+    routePending = true;
+    setTimeout(() => {
+      routePending = false;
+      if (enabled && location.href !== lastHref) {
+        lastHref = location.href;
+        enforce();
+      }
+    }, 0);
   }
-  if (document.documentElement) start();
-  else document.addEventListener("DOMContentLoaded", start, { once: true });
+  window.addEventListener("popstate", routeChanged);
+  window.addEventListener("hashchange", routeChanged);
+  document.addEventListener("yt-navigate-finish", () => {
+    if (location.href === lastHref && enabled && document.body &&
+        document.documentElement?.classList.contains("pf-blocked") && !document.getElementById(OVERLAY_ID)) {
+      enforce();
+    } else {
+      routeChanged();
+    }
+  });
+
+  const navigationEvents = window.navigation && "oncurrententrychange" in window.navigation;
+  if (navigationEvents) window.navigation.addEventListener("currententrychange", routeChanged);
+  let fallbackTimer;
+  function updateRouteFallback() {
+    if (navigationEvents) return;
+    if (enabled && !document.hidden) {
+      if (fallbackTimer === undefined) fallbackTimer = setInterval(routeChanged, 250);
+    } else if (fallbackTimer !== undefined) {
+      clearInterval(fallbackTimer);
+      fallbackTimer = undefined;
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    updateRouteFallback();
+    if (!document.hidden) routeChanged();
+  });
+
+  function syncPolicy() {
+    lastHref = location.href;
+    enforce();
+    updateRouteFallback();
+  }
+  if (document.documentElement) syncPolicy();
+  else document.addEventListener("DOMContentLoaded", syncPolicy, { once: true });
 
   chrome.storage.local.get({ ciceron_enabled: true }, (settings) => {
     // Do not let a delayed initial read override a more recent storage event.
     if (storageChangedDuringLoad) return;
     enabled = settings.ciceron_enabled !== false;
-    enforce();
+    syncPolicy();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.ciceron_enabled) {
       storageChangedDuringLoad = true;
       enabled = changes.ciceron_enabled.newValue !== false;
-      enforce();
+      syncPolicy();
     }
   });
 })();

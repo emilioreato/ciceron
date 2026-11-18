@@ -4,12 +4,22 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from PySide6.QtCore import QDate, QTime, Qt
 from PySide6.QtTest import QTest
+from unittest.mock import patch
 with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
  os.environ['APPDATA']=tmp
  os.environ['CICERON_HOME']=str(Path(tmp)/'Aplicacion')
  path=Path(__file__).resolve().parents[1] / 'src' / 'ciceron.pyw'; l=importlib.machinery.SourceFileLoader('ci',str(path)); s=importlib.util.spec_from_loader(l.name,l); m=importlib.util.module_from_spec(s); l.exec_module(m)
  m.write(m.CONFIG,dict(m.DEFAULT,show_timer=False,guardian=False,interval='inválido',theme='dark'))
  a=m.QApplication([]); a.setQuitOnLastWindowClosed(False); c=m.App(); notices=[]
+ stacking=m.CountdownButton()
+ stacking.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+ stacking.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
+ with patch.object(m,'restore_above_taskbar') as restore:
+  stacking.show()
+  assert stacking._stacking_check.isSingleShot()
+  QTest.qWait(220)
+  assert not stacking._stacking_check.isActive() and restore.call_count == 1
+ stacking.close()
  assert c.cfg['interval']==m.DEFAULT['interval']
  aware=m.dt.datetime.fromisoformat('2027-11-12T12:15+00:00')
  assert m.target({'target':aware.isoformat()})==aware.astimezone().replace(tzinfo=None)
@@ -36,7 +46,9 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
   chk.setFocus(); a.processEvents(); QTest.keyClick(chk,Qt.Key.Key_Space); assert chk.isChecked()
   QTest.keyClick(chk,Qt.Key.Key_Space); assert not chk.isChecked()
   button=next(x for x in d.findChildren(m.QPushButton) if x.text()=='Calendario')
-  assert button.parentWidget() is d.findChild(m.QDateEdit).parentWidget()
+  date=d.findChild(m.QDateEdit)
+  assert button.parentWidget() is date.parentWidget()
+  assert button.x()>date.geometry().right() and button.y()==date.y() and button.height()==date.height()
   button_frame=button.grab().toImage()
   assert button_frame.pixelColor(8,button_frame.height()//2).lightness()<110
   button.click()

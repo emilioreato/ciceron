@@ -72,7 +72,7 @@ El formato es ZIP con extensión `.ciceron`. Usa rutas relativas con `/` y nombr
 | `settings` | Opcional. Hasta 24 ajustes con `id`, `label`, `type` y `default`. Declara `"portable": false` para excluir rutas locales u otras preferencias del equipo. Los IDs usan minúsculas ASCII, números y guiones bajos, con letra inicial y hasta 40 caracteres. |
 | `data` | Opcional. Objeto con `version` entera positiva y una lista `files` de hasta 256 rutas relativas de archivos persistentes. |
 
-Los tipos de ajuste son `boolean`, `text` de hasta 512 caracteres, `integer` con `min` y `max` entre −1 000 000 y 1 000 000, y `choice` con entre 1 y 24 opciones de texto distintas. Cicerón valida los valores al empaquetar y al guardarlos. Rechaza campos desconocidos del manifiesto.
+Los tipos de ajuste son `boolean`, `text` de hasta 512 caracteres, `integer` con `min` y `max` entre −1 000 000 y 1 000 000, y `choice` con entre 1 y 24 opciones de texto distintas. En un ajuste `text`, declara `"multiline": true` para mostrar un editor de varias líneas que admite hasta 8192 caracteres. Cicerón valida los valores al empaquetar y al guardarlos. Rechaza campos desconocidos del manifiesto.
 
 ## Contrato al ejecutar
 

@@ -135,7 +135,11 @@ def valid_setting(spec, value):
         return type(value) is int and spec['min'] <= value <= spec['max']
     if kind == 'choice':
         return isinstance(value, str) and value in spec['choices']
-    return isinstance(value, str) and len(value) <= 512 and '\0' not in value
+    return isinstance(value, str) and len(value) <= text_setting_limit(spec) and '\0' not in value
+
+
+def text_setting_limit(spec):
+    return 8192 if spec.get('multiline', False) else 512
 
 
 def manifest(data):
@@ -177,7 +181,7 @@ def manifest(data):
         raise PackageError('Se admiten hasta 24 ajustes.')
     keys = set()
     for spec in settings:
-        object_keys(spec, 'id label type default min max choices portable', 'ajuste')
+        object_keys(spec, 'id label type default min max choices portable multiline', 'ajuste')
         key = spec.get('id')
         if not isinstance(key, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,39}', key) or key in keys:
             raise PackageError('Cada ajuste necesita un id único en minúsculas.')
@@ -186,6 +190,8 @@ def manifest(data):
             raise PackageError(f'El indicador portable de {key} debe ser booleano.')
         if not short_text(spec.get('label'), 80) or spec.get('type') not in ('boolean', 'integer', 'choice', 'text'):
             raise PackageError(f'Tipo o etiqueta inválidos en {key}.')
+        if 'multiline' in spec and (spec['type'] != 'text' or type(spec['multiline']) is not bool):
+            raise PackageError(f'El indicador multiline de {key} solo admite un booleano en campos de texto.')
         if spec['type'] == 'integer' and not (
                 type(spec.get('min')) is int and type(spec.get('max')) is int and
                 -1000000 <= spec['min'] <= spec['max'] <= 1000000):

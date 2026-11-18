@@ -6,7 +6,7 @@ try {
     $python = (Resolve-Path -LiteralPath '.venv/Scripts/python.exe').Path
     $failed = @()
     $env:QT_QPA_PLATFORM = 'offscreen'
-    foreach ($name in @('app_paths', 'desarrollo', 'inicio', 'inicio_cuenta', 'centro', 'paquetes', 'datos', 'browser_bridge', 'browser_ui')) {
+    foreach ($name in @('app_paths', 'desarrollo', 'inicio', 'inicio_cuenta', 'arranque', 'centro', 'paquetes', 'datos', 'browser_bridge', 'browser_ui')) {
         & $python "tests/$name.py"
         if ($LASTEXITCODE -ne 0) { $failed += $name }
     }

@@ -1,8 +1,11 @@
 """Protocolo local de mensajería nativa de Cicerón para Chromium."""
+import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
 from app_paths import data_root
+from power_state import low_power
 import queue
 import struct
 import subprocess
@@ -16,6 +19,7 @@ POLICY = DATA / 'navegador.json'
 SESSIONS = DATA / 'navegadores-activos'
 LIMIT = 1024 * 1024
 DEFAULT = {'enabled': None, 'x_selectors': []}
+HEARTBEAT_SECONDS = 25
 
 
 def validate(value):
@@ -99,11 +103,82 @@ def open_ciceron():
     return True
 
 
+class BrowserInbox:
+    """Wait for the pipe reader, a policy directory change or the next heartbeat."""
+    def __init__(self, directory):
+        self.queue = queue.SimpleQueue()
+        self.lock = threading.Lock()
+        self.event = self.watch = None
+        if os.name != 'nt':
+            return
+        kernel = self.kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateEventW.restype = wintypes.HANDLE
+        kernel.FindFirstChangeNotificationW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD]
+        kernel.FindFirstChangeNotificationW.restype = wintypes.HANDLE
+        kernel.WaitForMultipleObjects.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE),
+                                                 wintypes.BOOL, wintypes.DWORD]
+        kernel.WaitForMultipleObjects.restype = wintypes.DWORD
+        for name in ('SetEvent', 'CloseHandle', 'FindNextChangeNotification', 'FindCloseChangeNotification'):
+            getattr(kernel, name).argtypes = [wintypes.HANDLE]
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        watch = kernel.FindFirstChangeNotificationW(str(directory), False, 0x11)
+        if not watch or watch == ctypes.c_void_p(-1).value:
+            return
+        self.watch = watch
+        self.event = kernel.CreateEventW(None, False, False, None)
+        if not self.event:
+            self.close()
+
+    def put(self, value):
+        with self.lock:
+            self.queue.put(value)
+            if self.event:
+                self.kernel.SetEvent(self.event)
+
+    def receive(self, timeout):
+        try:
+            return self.queue.get_nowait()
+        except queue.Empty:
+            pass
+        if self.watch:
+            handles = (wintypes.HANDLE * 2)(self.event, self.watch)
+            result = self.kernel.WaitForMultipleObjects(2, handles, False, max(1, int(timeout * 1000 + 1)))
+            if result == 0:
+                try:
+                    return self.queue.get_nowait()
+                except queue.Empty:
+                    return {}
+            if result == 1:
+                if not self.kernel.FindNextChangeNotification(self.watch):
+                    self.close()
+                return {}
+            if result == 0x102:
+                return {}
+            self.close()
+        try:
+            return self.queue.get(timeout=min(timeout, 8 if low_power() else 2))
+        except queue.Empty:
+            return {}
+
+    def close(self):
+        with self.lock:
+            if self.watch:
+                self.kernel.FindCloseChangeNotification(self.watch)
+                self.watch = None
+            if self.event:
+                self.kernel.CloseHandle(self.event)
+                self.event = None
+
+
 def main():
     if os.name=='nt':
         import msvcrt
         msvcrt.setmode(sys.stdin.fileno(),os.O_BINARY); msvcrt.setmode(sys.stdout.fileno(),os.O_BINARY)
-    inbox=queue.Queue(); stop=object()
+    inbox=BrowserInbox(DATA); stop=object()
     def read_loop():
         try:
             while True:
@@ -116,8 +191,8 @@ def main():
     session=uuid.uuid4().hex; status=SESSIONS/(session+'.json'); last=None; label='Navegador'; heartbeat=0; browser_enabled=None; fault=None; browser_error=False
     try:
         while True:
-            try: message=inbox.get(timeout=2)
-            except queue.Empty: message={}
+            timeout=max(0, heartbeat + HEARTBEAT_SECONDS - time.monotonic()) if heartbeat else 0
+            message=inbox.receive(timeout)
             if message is stop: break
             if message.get('type') == 'open-ciceron':
                 send_message(sys.stdout.buffer, {'ok': open_ciceron()})
@@ -128,15 +203,17 @@ def main():
                 last=None
             if message.get('type')=='status':
                 reported=message.get('enabled')
-                browser_enabled=reported if type(reported) is bool else None
-                browser_error=message.get('error') is True
-                heartbeat=0
+                enabled=reported if type(reported) is bool else None
+                error=message.get('error') is True
+                if (enabled, error) != (browser_enabled, browser_error):
+                    browser_enabled, browser_error = enabled, error
+                    heartbeat=0
             try:
                 policy=load_policy(); reply={'type':'policy','policy':policy}; fault=None
             except (OSError,ValueError,TypeError):
                 fault='No se pudo leer la configuración de Cicerón.'; reply={'type':'error','message':fault}
             if reply!=last: send_message(sys.stdout.buffer,reply); last=reply
-            if time.monotonic()-heartbeat>=10:
+            if not heartbeat or time.monotonic()-heartbeat>=HEARTBEAT_SECONDS:
                 try:
                     SESSIONS.mkdir(parents=True,exist_ok=True)
                     status.write_text(json.dumps({'browser':label,'time':time.time(),'enabled':browser_enabled,'error':fault or ('El navegador no pudo aplicar las reglas.' if browser_error else None)}),encoding='utf-8')
@@ -144,6 +221,7 @@ def main():
                 heartbeat=time.monotonic()
     except (OSError,BrokenPipeError): pass
     finally:
+        inbox.close()
         try: status.unlink(missing_ok=True)
         except OSError: pass
 

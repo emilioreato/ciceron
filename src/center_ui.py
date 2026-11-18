@@ -34,17 +34,17 @@ def dark_mode(theme):
 UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
 
 
-def clear_styles(scope='', light=False):
+def clear_styles(scope='', light=False, frost_controls=False):
     # Keep the shared stylesheet's spacing, target sizes and semantic roles.
     scope = (scope + ' ') if scope else ''
     def rule(selectors, properties):
         return ', '.join(scope + selector for selector in selectors.split(', ')) + ' { ' + properties + ' }'
     controls = 'QPushButton, QToolButton, QComboBox, QLineEdit, QAbstractSpinBox, QPlainTextEdit'
     label_color = '#252a32' if light else '#f0f2f6'
-    return '\n'.join((
+    styles = (
         rule('QWidget', 'color: #f8f9fc; font-family: "Segoe UI Variable Text", "Segoe UI";'),
         rule('QLabel, QLabel#muted, QLabel#heroTitle, QLabel#heroDetail', f'color: {label_color}; background: transparent;'),
-        rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#dateField, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
+        rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
              'background: transparent; border-color: transparent;'),
         rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',
              'background: rgba(23,29,39,128); border: 1px solid transparent; border-radius: 11px; color: #fafbff;'),
@@ -53,10 +53,20 @@ def clear_styles(scope='', light=False):
         rule('QPushButton:checked, QPushButton:pressed, QFrame#centerTabs QPushButton#nav:checked',
              'background: rgba(48,60,78,185); color: white; border-color: transparent;'),
         rule('QPushButton:disabled', 'color: #b3b8c2; background: rgba(38,42,48,100);'),
-        rule('QFrame#dateField QDateEdit, QFrame#dateField QPushButton#calendarButton, QPushButton#destructive', 'background: rgba(23,29,39,128); color: #fafbff; border-color: transparent;'),
+        rule('QPushButton#destructive', 'background: rgba(23,29,39,128); color: #fafbff; border-color: transparent;'),
         rule('QCalendarWidget, QCalendarWidget QWidget#qt_calendar_navigationbar, QCalendarWidget QAbstractItemView', 'background: rgba(23,29,39,135); color: white; alternate-background-color: transparent;'),
         rule('QMenu, QComboBox QAbstractItemView', 'background: #303640; color: #fafbff;'),
-    ))
+    )
+    if frost_controls:
+        styles += (
+            rule('QPushButton, QPushButton:hover, QPushButton:pressed, QPushButton:checked, QPushButton#quiet, QPushButton#quiet:hover, QPushButton#primary, QPushButton#primary:hover, QPushButton#destructive, QLineEdit, QAbstractSpinBox',
+                 'background: transparent; color: #202731; placeholder-text-color: #4a5564; border: 1px solid transparent;'),
+            rule('QPushButton:disabled, QPushButton#destructive:disabled, QAbstractSpinBox:disabled',
+                 'background: transparent; color: #596374;'),
+            rule('QPushButton:focus, QPushButton#quiet:focus, QPushButton#primary:focus, QLineEdit:focus, QAbstractSpinBox:focus',
+                 'border-color: #64758c;'),
+        )
+    return '\n'.join(styles)
 
 
 def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
@@ -124,11 +134,12 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     QPushButton#destructive:disabled {{ color: {muted}; }}
     QPushButton#heroAction {{ color: white; background: rgba(233,240,255,40); border-color: rgba(233,240,255,125); }}
     QPushButton#heroAction:hover, QPushButton#heroAction:focus {{ background: rgba(233,240,255,75); }}
-    QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPlainTextEdit {{
+    QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPlainTextEdit, QListWidget {{
         background: {field}; border: 1px solid {stroke}; border-radius: 11px; padding: 7px 10px; min-height: 19px;
     }}
     QTimeEdit:disabled {{ color: {muted}; background: {base}; }}
-    QComboBox QAbstractItemView {{ color: {ink}; background: {field}; selection-background-color: {pressed}; selection-color: {ink}; }}
+    QComboBox QAbstractItemView, QListWidget {{ color: {ink}; background: {field}; selection-background-color: {pressed}; selection-color: {ink}; }}
+    QPushButton#effectSwitch {{ text-align: left; padding-left: 11px; padding-right: 27px; }}
     QComboBox#preference {{ padding: 5px 27px 5px 9px; }}
     QComboBox#preference::drop-down {{ width: 25px; border: 0; background: transparent; }}
     QComboBox#preference::down-arrow {{ image: none; width: 0; height: 0; }}
@@ -194,8 +205,6 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         }}
         """
     styles += '''
-            QFrame#dateField { background: transparent; border: 0; }
-            QFrame#dateField QPushButton#calendarButton { padding-left: 10px; padding-right: 10px; }
         '''
     styles += '''
             QPushButton#destructive { background: #ffeded; color: #8f242c; border: 1px solid #e9aab0; }
@@ -249,7 +258,10 @@ class LiveMaterial:
         if self.material_changed:
             self.material_changed()
         else:
-            self.setStyleSheet(stylesheet(self.dark, self.glass) + (clear_styles() if self.property('pureGlass') else ''))
+            style = stylesheet(self.dark, self.glass)
+            if self.property('pureGlass'):
+                style += clear_styles(frost_controls=live and self.property('frostControls'))
+            self.setStyleSheet(style)
 
     def showEvent(self, event):
         super().showEvent(event)

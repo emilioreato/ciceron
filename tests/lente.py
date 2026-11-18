@@ -139,13 +139,15 @@ def run():
             assert after_jump.pixelColor(center_x, center_y) == before_jump.pixelColor(center_x, center_y)
             assert after_jump.pixelColor(center_x, center_y).alpha() == 255
         worker = bubble.worker
-        assert bubble.show_in_screenshots()
-        assert not bubble.timer.isActive() and bubble.photo_timer.isActive()
-        bubble.photo_timer.stop()
-        bubble.resume_capture()
+        app.setProperty('captureMode', True)
+        bubble.update_capture_mode()
+        assert not bubble.timer.isActive() and bubble.worker is None and worker.closed.is_set()
+        app.setProperty('captureMode', False)
+        bubble.update_capture_mode()
         assert bubble.timer.isActive()
+        resumed_worker = bubble.worker
         bubble.close()
-        assert not bubble.timer.isActive() and worker.closed.is_set()
+        assert not bubble.timer.isActive() and resumed_worker.closed.is_set()
         print('GPU: renderizado, bordes, gris neutro, seguimiento y cierre: correctos.')
         app.quit()
     except Exception:

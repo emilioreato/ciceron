@@ -7,11 +7,11 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QAbstractButton, QAbstractSpinBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton, QWidget
+    QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLineEdit, QPlainTextEdit, QPushButton, QWidget
 )
 
 from gpu_lens import EDGE_OPTICS, VERTEX, compile_lens, paint_optic
-from windows_glass import BackdropCapture, get_style, set_affinity
+from windows_glass import BackdropCapture, apply_capture_affinity, capture_mode, get_style
 
 
 FRAGMENT = '''#version 120
@@ -112,16 +112,18 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 continue
             area = QRect(widget.mapTo(owner, QPoint()), widget.size())
             clip = area.intersected(rect.toRect())
+            frost = owner.property('frostControls')
             parent = widget.parentWidget()
             while parent is not None and parent is not owner and not clip.isEmpty():
+                frost = frost or parent.property('frostControls')
                 clip = clip.intersected(QRect(parent.mapTo(owner, QPoint()), parent.size()))
                 parent = parent.parentWidget()
-            if clip.isEmpty():
+            if clip.isEmpty() or (frost and isinstance(widget, QCheckBox)):
                 continue
             GL.glScissor(round(clip.x()*viewport[2]/width),
                          round((height-clip.y()-clip.height())*viewport[3]/height),
                          round(clip.width()*viewport[2]/width), round(clip.height()*viewport[3]/height))
-            draw(QRectF(area), 11, 2)
+            draw(QRectF(area), 11, 3 if frost else 2)
     finally:
         GL.glDisable(GL.GL_SCISSOR_TEST)
 
@@ -153,9 +155,6 @@ class GlassBackdrop(QOpenGLWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.capture_hwnd = None
-        self.photo_timer = QTimer(self)
-        self.photo_timer.setSingleShot(True)
-        self.photo_timer.timeout.connect(self.resume_capture)
         self.hide()
 
     def initializeGL(self):
@@ -178,12 +177,12 @@ class GlassBackdrop(QOpenGLWidget):
             self.error = str(error)
 
     def start(self):
-        if self.timer.isActive() or self.photo_timer.isActive() or not self.window().isVisible():
+        if self.timer.isActive() or capture_mode() or not self.window().isVisible() or self.window().isMinimized():
             return
         hwnd = int(self.window().winId())
         if not get_style(hwnd, -20) & 0x00080000:
             return
-        if not set_affinity(hwnd, 0x11):
+        if not apply_capture_affinity(self.window(), live=True):
             return
         self.capture_hwnd = hwnd
         frame = self.capture_source.capture_behind(hwnd)
@@ -205,27 +204,14 @@ class GlassBackdrop(QOpenGLWidget):
     def stop(self):
         active = self.timer.isActive() or self.frame is not None
         self.timer.stop()
-        self.photo_timer.stop()
         if self.capture_hwnd is not None:
-            set_affinity(self.capture_hwnd, 0)
+            apply_capture_affinity(self.window(), live=False)
             self.capture_hwnd = None
         self.hide()
         self.frame = None
         self.capture_source.close()
         if active:
             self.on_ready(False)
-
-    def show_in_screenshots(self):
-        if self.capture_hwnd is not None and set_affinity(self.capture_hwnd, 0):
-            self.timer.stop()
-            self.photo_timer.start(20000)
-
-    def resume_capture(self):
-        if self.capture_hwnd is None or not set_affinity(self.capture_hwnd, 0x11):
-            self.stop()
-            return
-        self.timer.start(40)
-        self.refresh()
 
     def refresh(self):
         owner = self.window()

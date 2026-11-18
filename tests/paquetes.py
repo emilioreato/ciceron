@@ -18,7 +18,10 @@ with TemporaryDirectory() as temporary:
         'schema': 1, 'id': 'local.prueba', 'name': 'Prueba', 'version': '1.0.0',
         'entrypoint': 'Prueba.exe', 'args': ['un argumento'], 'icon': 'icono.png',
         'dock': {'visible': True, 'wheel': 'consume'},
-        'settings': [{'id': 'opcion', 'label': 'Una opción', 'type': 'boolean', 'default': False}],
+        'settings': [
+            {'id': 'opcion', 'label': 'Una opción', 'type': 'boolean', 'default': False},
+            {'id': 'notas', 'label': 'Notas', 'type': 'text', 'default': '', 'multiline': True},
+        ],
     }
     (payload / 'Prueba.exe').write_bytes(b'MZ-version-1')
     (payload / 'icono.png').write_bytes(b'icono de prueba')
@@ -37,7 +40,9 @@ with TemporaryDirectory() as temporary:
     unexpected_file.write_bytes(b'archivo no incluido en el paquete')
     assert store.install(first)[0] == 'reparada'
     assert installed_executable.read_bytes() == b'MZ-version-1' and not unexpected_file.exists()
-    store.save_settings(spec, {'opcion': True})
+    notes = 'Varias líneas\n' * 100
+    store.save_settings(spec, {'opcion': True, 'notas': notes})
+    assert store.settings(spec)['notas'] == notes
     with patch('app_packages.subprocess.Popen') as spawn:
         store.launch(initial)
         args = spawn.call_args

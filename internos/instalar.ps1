@@ -46,6 +46,7 @@ $link = Join-Path $menu 'Cicerón.lnk'
 $legacyLink = Join-Path $menu 'Mi centro.lnk'
 $runName = 'Ciceron'
 $legacyRunName = 'GanaLaBatalla'
+$startupArgument = '--inicio-silencioso'
 $oldRun = $null; $oldLegacyRun = $null
 $runMutationStarted = $false; $changedExe = $false; $tempLink = $null
 $hadExe = $false; $alreadyInstalled = $false; $locked = $false
@@ -77,8 +78,20 @@ function Restore-RunState([string]$Name, $State) {
 
 function Get-NormalizedTarget([string]$Value) {
     if ($Value -isnot [string]) { return $null }
-    $expanded = [Environment]::ExpandEnvironmentVariables($Value.Trim().Trim('"'))
+    $command = $Value.Trim()
+    if ($command.StartsWith('"')) {
+        $end = $command.IndexOf('"', 1)
+        if ($end -lt 0) { return $null }
+        $target = $command.Substring(1, $end - 1)
+    } else {
+        $target = ($command -split '\s+', 2)[0]
+    }
+    $expanded = [Environment]::ExpandEnvironmentVariables($target)
     try { return [IO.Path]::GetFullPath($expanded) } catch { return $null }
+}
+
+function Get-CiceronStartupCommand([string]$Path) {
+    return '"' + $Path + '" ' + $startupArgument
 }
 
 function Test-OwnedRunState($State, [string[]]$AllowedPaths) {
@@ -409,7 +422,7 @@ try {
         if ($ownShortcut) {
             $tempLink = Join-Path $menu ('.Ciceron-' + [guid]::NewGuid().ToString('N') + '.lnk')
             $shortcut = $shell.CreateShortcut($tempLink)
-            $shortcut.TargetPath = $destination; $shortcut.Arguments = '--abrir'; $shortcut.IconLocation = $destination + ',0'; $shortcut.WorkingDirectory = $installDir
+            $shortcut.TargetPath = $destination; $shortcut.Arguments = '--alternar-centro'; $shortcut.IconLocation = $destination + ',0'; $shortcut.WorkingDirectory = $installDir
             $shortcut.Save()
         }
         if ($ownRun -and $ownLegacyRun -and ($oldRun.Exists -or $oldLegacyRun.Exists)) {
@@ -417,7 +430,7 @@ try {
                 throw 'La entrada de inicio cambió durante la reparación.'
             }
             $runMutationStarted = $true
-            New-ItemProperty -LiteralPath $RunKey -Name $runName -Value ('"' + $destination + '"') -PropertyType String -Force | Out-Null
+            New-ItemProperty -LiteralPath $RunKey -Name $runName -Value (Get-CiceronStartupCommand $destination) -PropertyType String -Force | Out-Null
             if ($oldLegacyRun.Exists) { Remove-ItemProperty -LiteralPath $RunKey -Name $legacyRunName }
         }
         if ($tempLink) { Move-Item -LiteralPath $tempLink -Destination $link -Force }
@@ -477,7 +490,7 @@ try {
 
     $tempLink = Join-Path $menu ('.Ciceron-' + [guid]::NewGuid().ToString('N') + '.lnk')
     $shortcut = $shell.CreateShortcut($tempLink)
-    $shortcut.TargetPath = $destination; $shortcut.Arguments = '--abrir'; $shortcut.IconLocation = $destination + ',0'; $shortcut.WorkingDirectory = $installDir
+    $shortcut.TargetPath = $destination; $shortcut.Arguments = '--alternar-centro'; $shortcut.IconLocation = $destination + ',0'; $shortcut.WorkingDirectory = $installDir
     $shortcut.Save()
     Copy-Item -LiteralPath $source -Destination $stage -Force
     if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $stage -Algorithm SHA256).Hash) { throw 'La copia de preparación no coincide con el original.' }
@@ -502,7 +515,7 @@ try {
     }
     if ($oldRun.Exists -or $oldLegacyRun.Exists -or !$alreadyInstalled) {
         $runMutationStarted = $true
-        New-ItemProperty -LiteralPath $RunKey -Name $runName -Value ('"' + $destination + '"') -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $RunKey -Name $runName -Value (Get-CiceronStartupCommand $destination) -PropertyType String -Force | Out-Null
         if ($oldLegacyRun.Exists) { Remove-ItemProperty -LiteralPath $RunKey -Name $legacyRunName }
     }
     Move-Item -LiteralPath $tempLink -Destination $link -Force
@@ -599,7 +612,7 @@ try {
             $currentLegacyRun = Get-RunState $legacyRunName
             $shouldHaveStartup = $oldRun.Exists -or $oldLegacyRun.Exists -or !$alreadyInstalled
             $expectedNew = [pscustomobject]@{ Exists = $shouldHaveStartup; Raw = $null; Kind = $null }
-            if ($shouldHaveStartup) { $expectedNew.Raw = '"' + $destination + '"'; $expectedNew.Kind = [Microsoft.Win32.RegistryValueKind]::String }
+            if ($shouldHaveStartup) { $expectedNew.Raw = (Get-CiceronStartupCommand $destination); $expectedNew.Kind = [Microsoft.Win32.RegistryValueKind]::String }
             $expectedLegacy = [pscustomobject]@{ Exists = $false; Raw = $null; Kind = $null }
             $newIsSafe = (Test-RunStateEqual $currentRun $oldRun) -or (Test-RunStateEqual $currentRun $expectedNew)
             $legacyIsSafe = (Test-RunStateEqual $currentLegacyRun $oldLegacyRun) -or (Test-RunStateEqual $currentLegacyRun $expectedLegacy)

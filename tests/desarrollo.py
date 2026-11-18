@@ -45,10 +45,13 @@ module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 original_init = module.App.__init__
 
-def observe_start(self):
-    original_init(self)
-    self.timer.setInterval(80)
-    self.timer.timeout.connect(lambda: module.QApplication.quit() if (profile / 'stop').exists() else None)
+def observe_start(self, **kwargs):
+    original_init(self, **kwargs)
+    if self.dock is None:
+        self.show_edge_dock()
+    self.test_stop_timer = module.QTimer(self.count)
+    self.test_stop_timer.timeout.connect(lambda: module.QApplication.quit() if (profile / 'stop').exists() else None)
+    self.test_stop_timer.start(80)
     if dev:
         self.cfg['title'] = 'Perfil de desarrollo'
         assert self.save()
@@ -58,8 +61,12 @@ def observe_activation(self):
     with (profile / 'activation').open('a', encoding='utf-8') as output:
         output.write('open\\n')
 
+def observe_tool(self, key, **_):
+    (profile / 'tool').write_text(key, encoding='utf-8')
+
 module.App.__init__ = observe_start
 module.App.open_center = observe_activation
+module.App.open_tool = observe_tool
 sys.exit(module.main())
 '''
 
@@ -97,6 +104,11 @@ with TemporaryDirectory() as temporary:
         link = subprocess.run([*arguments, '--abrir'], cwd=ROOT, env=dev_env, timeout=12)
         assert link.returncode == 0
         wait_until(lambda: (paths[1] / 'activation').read_bytes() != before[1], daily, dev)
+        tool = subprocess.run([*arguments, '--abrir-herramienta', 'clock'], cwd=ROOT, env=dev_env, timeout=12)
+        assert tool.returncode == 0
+        wait_until(lambda: (paths[1] / 'tool').is_file(), daily, dev)
+        assert (paths[1] / 'tool').read_text(encoding='utf-8') == 'clock'
+        assert not (paths[0] / 'tool').exists()
         assert (paths[0] / 'activation').read_bytes() == before[0]
         assert (paths[0] / 'datos/config.json').read_text(encoding='utf-8') == '{"glass": false}'
         assert 'Perfil de desarrollo' in (paths[1] / 'datos/config.json').read_text(encoding='utf-8')

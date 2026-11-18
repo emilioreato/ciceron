@@ -1,13 +1,13 @@
 """GPU glass lens for the Windows desktop; the background is never saved."""
 import time
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
-from PySide6.QtGui import QCursor, QImage, QPainter, QSurfaceFormat
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication
 from OpenGL import GL
 from OpenGL.GL import shaders
 from lens_capture import LensCapture
-from windows_glass import client_bounds, set_affinity
+from windows_glass import apply_capture_affinity, capture_mode, client_bounds
 
 VERTEX = '''#version 120
 varying vec2 uv;
@@ -75,6 +75,21 @@ void main() {
         float depth = (0.975 - edge) * diameter * 0.5;
         vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
+        if (clear_mode > 2.5) {
+            // A wider, separable binomial kernel for Timer's frosted controls.
+            vec2 step_size = 5.0 * sample_scale / extent;
+            vec3 color = vec3(0.0);
+            for (int y = -2; y <= 2; ++y) {
+                float wy = y == 0 ? 0.375 : ((y == -2 || y == 2) ? 0.0625 : 0.25);
+                for (int x = -2; x <= 2; ++x) {
+                    float wx = x == 0 ? 0.375 : ((x == -2 || x == 2) ? 0.0625 : 0.25);
+                    color += texture2D(backdrop, coord + vec2(float(x), float(y)) * step_size).rgb * wx * wy;
+                }
+            }
+            float alpha = glass_opacity * (1.0-smoothstep(0.975-1.5/diameter, 0.975, edge));
+            gl_FragColor = vec4(mix(color, vec3(0.98, 0.99, 1.0), 0.68) * alpha, alpha);
+            return;
+        }
         if (clear_mode > 0.5) {
             vec2 pixel = sample_scale / extent;
             // Binomial weights approximate a Gaussian on the button's backdrop.
@@ -264,9 +279,6 @@ class DesktopBubble(QOpenGLWidget):
         self.native_frame = None
         self.last_native_sample = (0.0, 0.0)
         self.last_request = None
-        self.photo_timer = QTimer(self)
-        self.photo_timer.setSingleShot(True)
-        self.photo_timer.timeout.connect(self.resume_capture)
         self.renderer = ''
         self.capture_error = None
         self.motion = QPointF()
@@ -286,11 +298,9 @@ class DesktopBubble(QOpenGLWidget):
         if not self.isValid() or self.gl_error:
             reason=self.gl_error or 'No se pudo iniciar la aceleración gráfica.'
             self.close(); raise RuntimeError(reason)
-        if not set_affinity(int(self.winId()), 0x11):
-            self.close()
+        self.update_capture_mode()
+        if not self.isVisible():
             raise RuntimeError('Windows no permitió separar el fondo de la lente.')
-        self.tick()
-        self.timer.start()
         self.raise_()
 
     def follow_cursor(self):
@@ -418,25 +428,20 @@ class DesktopBubble(QOpenGLWidget):
         self.surface_patches = patches
         self.frame_dirty = True
 
-    def show_in_screenshots(self):
-        if not self.isVisible() or not set_affinity(int(self.winId()), 0):
-            return False
-        self.timer.stop()
-        if self.worker is not None:
-            self.worker.submit(None)
-        self.photo_timer.start(20000)
-        return True
-
-    def resume_capture(self):
+    def update_capture_mode(self):
         if not self.isVisible():
             return
-        if not set_affinity(int(self.winId()), 0x11):
+        if capture_mode():
+            self.timer.stop()
+            self.stop_capture_worker()
+            self.capture_source = object()
+            apply_capture_affinity(self, live=False)
+            self.update()
+            return
+        if not apply_capture_affinity(self, live=True):
             self.close()
             return
-        self.last_request = None
         self.native_frame = None
-        if self.worker is not None:
-            self.worker.latest = None
         self.tick()
         self.timer.start()
 
@@ -461,6 +466,13 @@ class DesktopBubble(QOpenGLWidget):
             pixel_format = GL.GL_BGRA
             position = QPoint(x, y)
         else:
+            if capture_mode():
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(QColor(230, 240, 255, 200))
+                painter.setBrush(QColor(112, 143, 182, 130))
+                painter.drawEllipse(self.rect().adjusted(2, 2, -2, -2))
+                painter.end()
             return
         GL.glDisable(GL.GL_BLEND); GL.glBindTexture(GL.GL_TEXTURE_2D,self.texture)
         if self.frame_dirty:
@@ -489,7 +501,6 @@ class DesktopBubble(QOpenGLWidget):
 
     def closeEvent(self,event):
         self.timer.stop()
-        self.photo_timer.stop()
         self.stop_capture_worker()
         self.frame = None
         self.native_frame = None

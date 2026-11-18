@@ -3,7 +3,10 @@ import ctypes as C
 from ctypes import wintypes as W
 import os
 
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QApplication, QWidget
+from power_state import PowerStatus, get_power
 
 
 def bind(library, name, result, *args):
@@ -33,6 +36,46 @@ blit = bind(gdi, 'BitBlt', W.BOOL, W.HDC, C.c_int, C.c_int, C.c_int, C.c_int,
 stretch_blit = bind(gdi, 'StretchBlt', W.BOOL, W.HDC, C.c_int, C.c_int, C.c_int, C.c_int,
                    W.HDC, C.c_int, C.c_int, C.c_int, C.c_int, W.DWORD)
 stretch_mode = bind(gdi, 'SetStretchBltMode', C.c_int, W.HDC, C.c_int)
+
+
+def capture_mode():
+    return bool(QApplication.instance().property('captureMode'))
+
+
+def apply_capture_affinity(widget, *, live=None):
+    if live is not None:
+        widget._capture_live = live
+    private = bool(QApplication.instance().property('capturePrivate'))
+    excluded = getattr(widget, '_capture_live', False) or getattr(widget, '_capture_folded', False) or private
+    if QApplication.platformName() != 'windows':
+        return not live
+    result = set_affinity(int(widget.winId()), 0x11 if excluded else 0)
+    if result:
+        widget._capture_private_applied = private
+    elif live:
+        widget._capture_live = False
+    return result
+
+
+class CapturePrivacy(QObject):
+    """Apply the saved screenshot preference to existing and newly shown windows."""
+    def set_private(self, private):
+        app = self.parent()
+        if bool(app.property('capturePrivate')) == private:
+            return
+        app.setProperty('capturePrivate', private)
+        if private:
+            app.installEventFilter(self)
+        else:
+            app.removeEventFilter(self)
+        for widget in app.topLevelWidgets():
+            if widget.isVisible() or getattr(widget, '_capture_private_applied', False):
+                apply_capture_affinity(widget)
+
+    def eventFilter(self, widget, event):
+        if event.type() == QEvent.Type.Show and isinstance(widget, QWidget) and widget.isWindow():
+            apply_capture_affinity(widget)
+        return False
 
 
 class BitmapHeader(C.Structure):
@@ -126,14 +169,6 @@ class BackdropCapture:
             return C.string_at(self.data, size[0] * size[1] * 4)
         finally:
             release_dc(None, source)
-
-
-class PowerStatus(C.Structure):
-    _fields_ = [('ac', W.BYTE), ('flags', W.BYTE), ('percentage', W.BYTE),
-                ('saving', W.BYTE), ('seconds', W.DWORD), ('total_seconds', W.DWORD)]
-
-
-get_power = bind(kernel, 'GetSystemPowerStatus', W.BOOL, C.POINTER(PowerStatus))
 
 
 def energy_saver_active():

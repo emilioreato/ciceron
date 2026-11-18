@@ -17,10 +17,10 @@ class VisualDialog(GlassDialog):
                                 Qt.WindowType.WindowStaysOnTopHint)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             self.set_live(False)
-        self.resize(254 if attached else 300, 128 if attached else 162)
+        self.resize(280 if attached else 320, 142 if attached else 168)
         box = QVBoxLayout(self)
-        box.setContentsMargins(8, 5, 8, 6)
-        box.setSpacing(6)
+        box.setContentsMargins(14, 10, 14, 12)
+        box.setSpacing(8)
         title = QLabel('Efectos de escritorio')
         title.setObjectName('heading')
         if self.floating:
@@ -36,7 +36,6 @@ class VisualDialog(GlassDialog):
             header.addWidget(dismiss)
             box.addLayout(header)
         else:
-            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
             box.addWidget(title)
         self.bubble = EffectSwitch('Burbuja', self.toggle_bubble)
         self.particles = EffectSwitch('Partículas', self.toggle_particles)

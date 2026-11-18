@@ -17,10 +17,10 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QScrollArea, QStacke
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
 from windows_glass import (client_bounds, energy_saver_active, foreground_window, forward_wheel,
-                           is_external_window, root_window, set_affinity, window_belongs_to)
+                           is_external_window, root_window, apply_capture_affinity, capture_mode, window_belongs_to)
 
 
-def tool_icon(name):
+def tool_icon(name, *, light_background=False):
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -58,10 +58,10 @@ def tool_icon(name):
         path.addEllipse(QRectF(11, 5, 10, 22))
         path.moveTo(5, 16)
         path.lineTo(27, 16)
-    for color, width in ((QColor(255, 255, 255, 195), 3.5), (QColor('#343434'), 1.8)):
-        painter.setPen(QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
-                            Qt.PenJoinStyle.RoundJoin))
-        painter.drawPath(path)
+    color = QColor('#343434' if light_background else '#ffffff')
+    painter.setPen(QPen(color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                        Qt.PenJoinStyle.RoundJoin))
+    painter.drawPath(path)
     painter.end()
     return QIcon(pixmap)
 
@@ -72,7 +72,8 @@ class DockIcon(QToolButton):
         self.wheel = wheel
         self.setToolTip(label)
         self.setAccessibleName(label)
-        self.setIcon(icon)
+        self.light_icon = tool_icon(icon, light_background=True) if isinstance(icon, str) else None
+        self.setIcon(tool_icon(icon) if self.light_icon is not None else icon)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(action)
@@ -91,7 +92,9 @@ class DockIcon(QToolButton):
         size = round(min(self.width(), self.height()) * .68)
         if size > 0:
             area = QRect(round(center.x() - size / 2), round(center.y() - size / 2), size, size)
-            self.icon().paint(painter, area)
+            light = dock.layer.light if dock.using_glass else not (dock.theme_dark or dock.pure)
+            icon = self.light_icon if light and self.light_icon is not None else self.icon()
+            icon.paint(painter, area)
 
 
 class DockHandle(QToolButton):
@@ -113,15 +116,19 @@ class DockHandle(QToolButton):
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        tab = QRectF(self.rect()).adjusted(3, 3, -3, -3)
-        painter.setPen(QPen(QColor(170, 192, 228, 162), 1))
-        painter.setBrush(QColor(29, 41, 62, 223))
+        tab = QRectF(self.rect()).adjusted(5, 3, -1, -3)
+        if dock.theme_dark or dock.pure:
+            fill, ink = QColor(42, 50, 64, 218), QColor('#acb8cb')
+        else:
+            fill, ink = QColor(224, 230, 239, 220), QColor('#53627a')
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
         painter.drawRoundedRect(tab, 8, 8)
         center = tab.center()
         arrow = QPainterPath(center + QPointF(2, -4))
         arrow.lineTo(center + QPointF(-2, 0))
         arrow.lineTo(center + QPointF(2, 4))
-        painter.setPen(QPen(QColor('#eff5ff'), 1.7, Qt.PenStyle.SolidLine,
+        painter.setPen(QPen(ink, 1.5, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.drawPath(arrow)
 
@@ -331,7 +338,7 @@ class AttachedPanel(QWidget):
         if not self.isVisible():
             self.setGeometry(target)
         elif target != self.geometry():
-            current = client_bounds(int(self.winId())) if self.using_glass and not self.dock.photo_timer.isActive() else None
+            current = client_bounds(int(self.winId())) if self.using_glass and not capture_mode() else None
             if current is not None:
                 x, y, width, height = current
                 scale = self.devicePixelRatioF()
@@ -427,7 +434,9 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: rgba({line},160); }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
-        ''' + (clear_styles('QWidget#dockPanel', light and self.using_glass) if getattr(self.dock, 'pure', False) else ''))
+        ''' + (clear_styles('QWidget#dockPanel', light and self.using_glass,
+                            frost_controls=self.using_glass and self.content is not None and
+                            self.content.property('frostControls')) if self.dock.pure else ''))
         self.update()
 
     def dialog_finished(self):
@@ -476,14 +485,14 @@ class AttachedPanel(QWidget):
             painter.setPen(QPen(rim, 1))
             painter.drawRoundedRect(self.optic_rect(), self.CORNER_RADIUS, self.CORNER_RADIUS)
 
-    def prepare_layer(self, enabled, photo=False):
+    def prepare_layer(self, enabled):
         if enabled:
             self.layer.show()
             self.layer.lower()
-            enabled = self.layer.isValid() and not self.layer.error and (
-                photo or set_affinity(int(self.winId()), 0x11))
+            enabled = (self.layer.isValid() and not self.layer.error and
+                       apply_capture_affinity(self, live=True))
         if not enabled:
-            set_affinity(int(self.winId()), 0)
+            apply_capture_affinity(self, live=False)
             self.using_glass = False
             self.layer.hide()
             self.layer.frame = None
@@ -524,6 +533,7 @@ class AttachedPanel(QWidget):
                 content.hide()
                 self.stack.removeWidget(content)
                 content.deleteLater()
+        apply_capture_affinity(self, live=False)
         self.capture_enabled = self.using_glass = False
         self.capture_tile = self.pending_geometry = None
         self.layer.frame = None
@@ -592,7 +602,7 @@ class EdgeDock(QWidget):
         self.layer.hide()
         self.open_settings = open_settings
         self.entries = []
-        self.gear = DockIcon(self, 'Ajustes de Cicerón', tool_icon('settings'), open_settings)
+        self.gear = DockIcon(self, 'Ajustes de Cicerón', 'settings', open_settings)
         self.gear.hide()
         self.handle = DockHandle(self)
         self.handle.setAccessibleName('Desplegar Cicerón')
@@ -607,6 +617,7 @@ class EdgeDock(QWidget):
         self.motion_enabled = True
         self.transparency = 0.0
         self.progress = 0.0
+        self._capture_folded = True
         self.capacity = 1
         self.leave_at = 0.0
         self.transition_start = 0.0
@@ -619,12 +630,12 @@ class EdgeDock(QWidget):
         self.capture_timer = QTimer(self)
         self.capture_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.capture_timer.timeout.connect(self.capture)
-        self.photo_timer = QTimer(self)
-        self.photo_timer.setSingleShot(True)
-        self.photo_timer.timeout.connect(self.resume_capture)
         self.glass_timer = QTimer(self)
         self.glass_timer.setSingleShot(True)
         self.glass_timer.timeout.connect(self.prepare_layer)
+        self.glass_idle_timer = QTimer(self)
+        self.glass_idle_timer.setSingleShot(True)
+        self.glass_idle_timer.timeout.connect(self.release_idle_capture)
         QApplication.instance().applicationStateChanged.connect(self.application_state_changed)
         self.screen = None
         QApplication.instance().primaryScreenChanged.connect(self.change_screen)
@@ -669,26 +680,30 @@ class EdgeDock(QWidget):
 
     def apply_glass_tone(self, _light):
         self.handle.update()
+        for button in (*self.entries, self.gear):
+            button.update()
 
     def set_glass(self, enabled):
         changed = self.glass_enabled != bool(enabled)
         self.glass_enabled = bool(enabled)
         if changed and self.isVisible():
-            if self.glass_enabled:
+            if self.glass_enabled and self.progress > 0 and not capture_mode():
                 self.glass_timer.start(180)
-            else:
+            elif not self.glass_enabled:
                 self.stop_capture()
                 if self.panel is not None:
                     self.panel.capture_enabled = self.panel.prepare_layer(False)
 
     def prepare_layer(self):
-        if not self.isVisible():
+        if capture_mode() or not self.isVisible():
+            return
+        if self.progress == 0 and self.panel is None and self.pending_panel is None:
             return
         full = self.glass_enabled and not energy_saver_active()
         if full and self.backdrop is None:
             self.layer.show()
             self.layer.lower()
-            if self.layer.isValid() and not self.layer.error and set_affinity(int(self.winId()), 0x11):
+            if self.layer.isValid() and not self.layer.error and apply_capture_affinity(self, live=True):
                 self.backdrop = DockBackdropCapture()
                 if self.animation.isActive():
                     self.capture_timer.start(33)
@@ -696,11 +711,10 @@ class EdgeDock(QWidget):
         if self.backdrop is None or not full:
             self.stop_capture()
         if self.panel is not None:
-            self.panel.capture_enabled = self.panel.prepare_layer(self.backdrop is not None,
-                                                                  self.photo_timer.isActive())
+            self.panel.capture_enabled = self.panel.prepare_layer(self.backdrop is not None)
 
     def stop_capture(self):
-        self.photo_timer.stop()
+        self.glass_idle_timer.stop()
         self.capture_timer.stop()
         if self.backdrop is not None:
             self.backdrop.close()
@@ -710,15 +724,23 @@ class EdgeDock(QWidget):
         self.layer.hide()
         self.layer.frame = None
         self.layer.light = None
-        set_affinity(int(self.winId()), 0)
+        apply_capture_affinity(self, live=False)
         self.apply_glass_tone(True)
         self.update()
+
+    def release_idle_capture(self):
+        if (self.progress == 0 and self.backdrop is not None and getattr(self.backdrop, 'lens', None) is None):
+            self.stop_capture()
 
     def panel_shell(self):
         if self.panel_window is None:
             self.panel_window = AttachedPanel(self)
             self.destroyed.connect(self.panel_window.deleteLater)
         return self.panel_window
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        apply_capture_affinity(self)
 
     def hideEvent(self, event):
         self.glass_timer.stop()
@@ -740,6 +762,9 @@ class EdgeDock(QWidget):
     def reset_to_handle(self):
         self.animation.stop()
         self.capture_timer.stop()
+        self.glass_timer.stop()
+        if self.backdrop is not None:
+            self.glass_idle_timer.start(1200)
         self.pending_panel = None
         self.pending_open_scheduled = False
         self.leave_at = self.transition_to = self.progress = 0.0
@@ -757,12 +782,13 @@ class EdgeDock(QWidget):
             self.animation.setInterval(16)
 
     def reveal(self):
+        self.glass_idle_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
-        if self.glass_enabled and self.backdrop is None and not self.glass_timer.isActive():
+        if self.glass_enabled and not capture_mode() and self.backdrop is None and not self.glass_timer.isActive():
             self.glass_timer.start(180)
         if not self.animation.isActive():
             self.animation.start(16)
-        if self.backdrop is not None and not self.photo_timer.isActive() and not self.capture_timer.isActive():
+        if self.backdrop is not None and not self.capture_timer.isActive():
             self.capture_timer.start(33)
             self.capture()
         self.update_dock()
@@ -772,7 +798,8 @@ class EdgeDock(QWidget):
         over_dock = self.mask().contains(self.mapFromGlobal(QCursor.pos()))
         if over_dock:
             self.leave_at = now + self.HIDE_DELAY
-        target = float(self.panel is not None or self.pending_panel is not None or now < self.leave_at)
+        keep_open = capture_mode() and self.transition_to > 0
+        target = float(self.panel is not None or self.pending_panel is not None or now < self.leave_at or keep_open)
         previous = self.progress
         if self.transition_to != target:
             self.transition_start = now
@@ -792,6 +819,9 @@ class EdgeDock(QWidget):
         if self.progress == 0.0 and not target:
             self.animation.stop()
             self.capture_timer.stop()
+            self.glass_timer.stop()
+            if self.backdrop is not None:
+                self.glass_idle_timer.start(1200)
         else:
             waiting_to_hide = not over_dock and self.panel is None
             interval = 10 if self.progress != target or waiting_to_hide else 45
@@ -810,6 +840,11 @@ class EdgeDock(QWidget):
         self.toggle_panel(*request)
 
     def layout_icons(self):
+        folded = self.progress < self.HANDLE_FADE_END
+        if self._capture_folded != folded:
+            self._capture_folded = folded
+            if self.isVisible():
+                apply_capture_affinity(self)
         rows = self.entries[:self.capacity] + [self.gear]
         self.handle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, self.progress > .76)
         self.handle.update()
@@ -865,7 +900,7 @@ class EdgeDock(QWidget):
         painter.drawRoundedRect(rect, radius, radius)
 
     def capture(self):
-        if self.backdrop is None or self.photo_timer.isActive():
+        if self.backdrop is None:
             return
         panel = self.panel if self.panel is not None and self.panel.capture_enabled else None
         bounds = (client_bounds(int(self.winId())),
@@ -886,18 +921,20 @@ class EdgeDock(QWidget):
                         panel.animate_to(panel.pending_geometry)
         self.backdrop.submit(bounds)
 
-    def show_in_screenshots(self):
-        if self.backdrop is None or not self.isVisible():
-            return False
-        self.capture_timer.stop()
-        set_affinity(int(self.winId()), 0)
-        if self.panel is not None:
-            set_affinity(int(self.panel.winId()), 0)
-        self.photo_timer.start(20000)
-        return True
+    def update_capture_mode(self):
+        if not self.isVisible():
+            return
+        if capture_mode():
+            self.glass_timer.stop()
+            self.stop_capture()
+            if self.panel is not None:
+                self.panel.capture_enabled = self.panel.prepare_layer(False)
+        elif self.progress > 0 or self.panel is not None:
+            self.update_dock()
+            self.prepare_layer()
 
     def excluded_glass_windows(self):
-        if self.backdrop is None or self.photo_timer.isActive() or not self.isVisible():
+        if self.backdrop is None or not self.isVisible():
             return ()
         if self.panel is not None and self.panel.capture_enabled and self.panel.isVisible():
             return self, self.panel
@@ -930,18 +967,6 @@ class EdgeDock(QWidget):
         painter.end()
         return frame
 
-    def resume_capture(self):
-        if self.backdrop is None or not self.isVisible():
-            return
-        if not set_affinity(int(self.winId()), 0x11):
-            self.stop_capture()
-        self.prepare_layer()
-        if self.backdrop is not None:
-            self.last_frames = self.backdrop.latest
-            if self.animation.isActive():
-                self.capture_timer.start(33)
-            self.capture()
-
     def nativeEvent(self, event_type, message):
         msg = wintypes.MSG.from_address(int(message))
         if msg.message == 0x0218 and msg.wParam in (0x000A, 0x0012):
@@ -954,7 +979,7 @@ class EdgeDock(QWidget):
 
     def dismiss_inactive_panel(self):
         panel = self.panel
-        if panel is None or QApplication.applicationState() == Qt.ApplicationState.ApplicationActive:
+        if panel is None or capture_mode() or QApplication.applicationState() == Qt.ApplicationState.ApplicationActive:
             return
         target = foreground_window()
         if window_belongs_to(target, int(self.winId())) or self.is_panel_window(panel, target):
@@ -1022,7 +1047,7 @@ class EdgeDock(QWidget):
         self.panel.layer.setVisible(live)
         self.panel.layer.lower()
         self.panel.show_panel()
-        self.panel.capture_enabled = self.panel.prepare_layer(live, self.photo_timer.isActive())
+        self.panel.capture_enabled = self.panel.prepare_layer(live)
         self.capture()
         self.reveal()
 

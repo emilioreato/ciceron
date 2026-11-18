@@ -26,7 +26,7 @@ PORTABLE_PREFERENCES = {
     'ui_version': lambda v: v in ('v1', 'v2', 'v3'),
 }
 PORTABLE_PREFERENCES.update(dict.fromkeys(
-    ('show_timer', 'guardian', 'topmost', 'glass', 'open_center_on_start', 'dock_motion'),
+    ('show_timer', 'guardian', 'topmost', 'glass', 'open_center_on_start', 'dock_motion', 'include_in_captures'),
     lambda v: type(v) is bool))
 
 

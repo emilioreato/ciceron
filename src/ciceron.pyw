@@ -1,5 +1,6 @@
 """Cicerón: centro personal para Windows, interfaz Qt."""
 import ctypes, datetime as dt, json, math, os, sys, time, winreg
+from ctypes import wintypes
 from _ctypes import COMError
 from app_paths import application_root, data_root, development_mode, instance_suffix, resolve_app_path, stored_app_path, windows_appdata_root
 from app_packages import PACKAGE_EXT, PackageStore, app_tags, fold_search
@@ -7,8 +8,9 @@ from browser_ui import BrowserDialog
 from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
 from visual_playground import VisualDialog
 from pathlib import Path
-from PySide6.QtCore import QPoint, Qt, QTimer, QDate, QTime, Signal
-from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen
+from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, Qt,
+                            QTimer, QDate, QTime, Signal)
+from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen, QCursor
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
@@ -16,8 +18,9 @@ from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBo
 from PySide6.QtCore import QSize
 from package_ui import edit_settings, install_packages
 from data_ui import export_dialog, import_dialog
+from power_state import low_power
 from start_menu import StartMenuApps, pending_launches, request_launch
-from windows_glass import restore_above_taskbar
+from windows_glass import CapturePrivacy, capture_mode, restore_above_taskbar
 
 DATA = data_root()
 CONFIG = DATA / 'config.json'; APPS = DATA / 'apps.json'
@@ -26,9 +29,28 @@ LAUNCH_REQUESTS = DATA / 'arranques-paquetes'
 DEFAULT = dict(title='Mi objetivo', target='', show_timer=True, guardian=True,
                words='youtube, x.com, twitter, instagram', interval=3, topmost=True, geometry='', count_x_ratio=None,
                theme='system', glass=True, clarity='balanced', open_center_on_start=False,
-               ui_version='v2', dock_motion=True)
+               ui_version='v2', dock_motion=True, include_in_captures=True)
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 RUN_VALUE = 'Ciceron'
+STARTUP_ARGUMENT = '--inicio-silencioso'
+
+def startup_target(value):
+    """Extrae el ejecutable de una entrada Run, con o sin argumentos."""
+    if not isinstance(value, str):
+        return None
+    command = os.path.expandvars(value.strip())
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        if end < 0:
+            return None
+        return command[1:end]
+    return command.split(None, 1)[0] if command else None
+
+def startup_command(executable):
+    return f'"{executable}" {STARTUP_ARGUMENT}'
+
+def silent_start_requested(arguments):
+    return STARTUP_ARGUMENT in arguments and '--abrir' not in arguments
 
 def read(path, default):
     try:
@@ -62,20 +84,119 @@ def activation_event_signaled(kernel, handle):
         raise ctypes.WinError(kernel.GetLastError())
     raise OSError(f'WaitForSingleObject devolvió un estado inesperado: {result:#x}')
 
-def watch_activation_event(app, kernel, handle, callback):
+def watch_activation_event(app, kernel, handle, callback, power_changed=None, *, read_power=low_power,
+                          additional_events=()):
     timer = QTimer(app)
-    timer.setInterval(100)
+    next_power_check = 0.0
+    previous = None
+
+    def update_power(now):
+        nonlocal next_power_check, previous
+        next_power_check = now + 15
+        saving = read_power()
+        if saving != previous:
+            previous = saving
+            timer.setInterval(1000 if saving else 200)
+            if power_changed is not None:
+                power_changed(saving)
+
     def poll():
         try:
-            signaled = activation_event_signaled(kernel, handle)
+            main_signaled = activation_event_signaled(kernel, handle)
+            additional_callbacks = []
+            for event_handle, action in additional_events:
+                while activation_event_signaled(kernel, event_handle):
+                    additional_callbacks.append(action)
         except (OSError, RuntimeError):
             timer.stop()
             return
-        if signaled:
+        if main_signaled:
             callback()
+        for action in additional_callbacks:
+            action()
+        now = time.monotonic()
+        if now >= next_power_check:
+            update_power(now)
+
+    update_power(time.monotonic())
     timer.timeout.connect(poll)
     timer.start()
     return timer
+
+class SuspendResumeFilter(QAbstractNativeEventFilter):
+    """Oculta el centro antes de suspender o al reanudar automáticamente."""
+    WM_POWERBROADCAST = 0x0218
+    PBT_APMSUSPEND = 0x0004
+    PBT_APMRESUMECRITICAL = 0x0006
+    PBT_APMRESUMEAUTOMATIC = 0x0012
+
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        self.user32 = None
+        self.registration = None
+
+    def register(self, window):
+        try:
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            register = user32.RegisterSuspendResumeNotification
+            register.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            register.restype = wintypes.HANDLE
+            handle = register(wintypes.HWND(int(window)), 0)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return False
+        if not handle:
+            return False
+        self.user32 = user32
+        self.registration = handle
+        return True
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type == b'windows_generic_MSG':
+            msg = wintypes.MSG.from_address(int(message))
+            if (msg.message == self.WM_POWERBROADCAST and
+                    msg.wParam in (self.PBT_APMSUSPEND, self.PBT_APMRESUMECRITICAL,
+                                   self.PBT_APMRESUMEAUTOMATIC)):
+                self.controller.prepare_for_power_transition()
+        return False, 0
+
+    def stop(self):
+        if self.registration is None:
+            return
+        try:
+            unregister = self.user32.UnregisterSuspendResumeNotification
+            unregister.argtypes = [wintypes.HANDLE]
+            unregister.restype = wintypes.BOOL
+            unregister(self.registration)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        self.registration = None
+        self.user32 = None
+
+def watch_launch_requests(app, directory, callback):
+    watcher = QFileSystemWatcher(app)
+    scan = QTimer(watcher)
+    scan.setSingleShot(True)
+
+    def reconnect():
+        paths = watcher.directories()
+        if paths and not directory.is_dir():
+            watcher.removePaths(paths)
+        if not watcher.directories():
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                watcher.addPath(str(directory))
+            except OSError:
+                pass
+        callback()
+        if not watcher.directories():
+            scan.start(1000)
+
+    # The sender writes a temporary file and then publishes it by renaming it.
+    watcher.directoryChanged.connect(lambda _: scan.start(40))
+    scan.timeout.connect(reconnect)
+    scan.start(0)
+    return watcher
 
 def caption(text,kind=None):
     return panel(kind or '', text)
@@ -101,6 +222,31 @@ def remaining(t):
     if hours:
         return f'{hours}h {minutes}m'
     return f'{minutes}m' if minutes else '<1m'
+
+class FocusAlert(GlassDialog):
+    """Aviso de enfoque con el material y la cuenta activa de Cicerón."""
+    def __init__(self, parent, deadline, stop):
+        super().__init__(parent)
+        self.deadline=deadline
+        self.setWindowTitle('Cicerón · enfoque')
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
+        self.setMinimumWidth(360)
+        box=QVBoxLayout(self); box.setContentsMargins(28,24,28,24); box.setSpacing(12)
+        title=caption('Volvé a tu objetivo','title'); title.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(title)
+        desc=caption('El tiempo que queda para tu objetivo','muted'); desc.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(desc)
+        self.countdown=QLabel(); self.countdown.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.countdown.setStyleSheet('font-size: 32px; font-weight: 600; background: transparent;')
+        box.addWidget(self.countdown)
+        row=QHBoxLayout(); row.addWidget(button('Detener avisos',stop)); row.addWidget(button('Volver',self.accept,True)); box.addLayout(row)
+        self.refresh_timer=QTimer(self); self.refresh_timer.setInterval(1000); self.refresh_timer.timeout.connect(self.refresh_countdown)
+        self.refresh_countdown(); self.refresh_timer.start(); self.finished.connect(self.refresh_timer.stop)
+    def refresh_countdown(self):
+        self.countdown.setText(remaining(self.deadline))
+    def showEvent(self,event):
+        super().showEvent(event)
+        screen=QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        if screen:
+            self.adjustSize(); self.move(screen.availableGeometry().center()-self.rect().center())
 
 def foreground():
     u=ctypes.windll.user32; u.GetForegroundWindow.restype=ctypes.c_void_p
@@ -144,21 +290,25 @@ class ClearCheckBox(QCheckBox):
 
 class CountdownButton(QPushButton):
     moved=Signal(int)
+    visibility_changed=Signal()
     def __init__(self):
         super().__init__()
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._stacking_check = QTimer(self)
         self._stacking_check.setInterval(150)
+        self._stacking_check.setSingleShot(True)
         self._stacking_check.timeout.connect(self._restore_stacking)
 
     def showEvent(self, event):
         super().showEvent(event)
         if self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
             self._stacking_check.start()
+        self.visibility_changed.emit()
 
     def hideEvent(self, event):
         self._stacking_check.stop()
         super().hideEvent(event)
+        self.visibility_changed.emit()
 
     def _restore_stacking(self):
         if self.isVisible() and self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
@@ -188,7 +338,7 @@ class CountdownButton(QPushButton):
         super().mouseReleaseEvent(event)
 
 class App:
-    def __init__(self):
+    def __init__(self, *, suppress_implicit_open=False):
         data, broken=read(CONFIG,{}); self.cfg=DEFAULT.copy()
         if isinstance(data,dict): self.cfg.update({k:v for k,v in data.items() if k in DEFAULT})
         if self.cfg['theme'] not in ('system', 'light', 'dark'):
@@ -222,9 +372,11 @@ class App:
             pass  # A locked record can be read safely; debris can be retired at the next start.
         self.reload_packages()
         self.last_poll=0; self.last_alert=float('-inf'); self.alert=None
+        self.background_low_power = False
         self.broken_config = broken or not isinstance(data, dict)
         self.dock = None
         self.dock_signature = None
+        self.capture_privacy = CapturePrivacy(QApplication.instance())
         from edge_dock import AppWheelFilter
         self.wheel_filter = AppWheelFilter(self)
         QApplication.instance().installNativeEventFilter(self.wheel_filter)
@@ -248,18 +400,29 @@ class App:
         self.tray=QSystemTrayIcon(icon()); menu=QMenu(self.window)
         self.dock_visibility_action = menu.addAction('Ocultar barra lateral', self.toggle_edge_dock_visibility)
         menu.addSeparator()
+        self.photo_timer = QTimer(self.window)
+        self.photo_timer.setSingleShot(True)
+        self.photo_timer.timeout.connect(lambda: self.set_capture_mode(False))
+        self.photo_action = menu.addAction('Captura de pantalla · 20 segundos', self.start_photo_mode)
+        menu.addSeparator()
         menu.addAction('Salir', QApplication.quit)
         menu.aboutToShow.connect(self.update_tray_actions)
         self.tray.setContextMenu(menu)
         self.tray.setToolTip(self.window.windowTitle())
         self.tray.activated.connect(self.tray_clicked)
         self.tray.show()
-        self.render(); self.timer=QTimer(); self.timer.timeout.connect(self.tick); self.timer.start(1000); self.tick()
+        self.render()
+        self.timer = QTimer(self.count)
+        self.timer.setSingleShot(True)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer.timeout.connect(self.tick)
+        self.count.visibility_changed.connect(self.tick, Qt.ConnectionType.QueuedConnection)
+        self.tick()
         if self.cfg['show_timer'] and target(self.cfg): self._show_count()
         if self.broken_config: QMessageBox.warning(self.window,'Configuración','No se pudo leer la configuración; se conservó el archivo original.')
-        if self.cfg['open_center_on_start']:
+        if not suppress_implicit_open and self.cfg['open_center_on_start']:
             self.open_center()
-        elif not CONFIG.exists() or not QSystemTrayIcon.isSystemTrayAvailable():
+        elif not suppress_implicit_open and (not CONFIG.exists() or not QSystemTrayIcon.isSystemTrayAvailable()):
             self.open_center()
         else:
             self.show_edge_dock()
@@ -319,7 +482,9 @@ class App:
         self.cfg['count_x_ratio']=max(0.0,min(1.0,(x-screen.x())/available))
         if not self.save(): self.cfg['count_x_ratio']=previous
     def tray_clicked(self,reason):
-        if reason in (QSystemTrayIcon.ActivationReason.Trigger,QSystemTrayIcon.ActivationReason.DoubleClick):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.toggle_center()
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.open_center()
     def build_window(self):
         self.window = CenterWindow()
@@ -387,6 +552,7 @@ class App:
             self.glass_control.blockSignals(blocked)
             self.clarity_control.setEnabled(self.window.glass and not pure)
             self.theme_control.setEnabled(self.cfg['ui_version'] == 'v2')
+        self.update_capture_preference()
         self.update_window_style()
         if hasattr(self, 'count'):
             self.update_timer_style()
@@ -513,11 +679,24 @@ class App:
         startup = ClearCheckBox()
         self.startup_control = startup
         startup.setFixedSize(22, 22)
-        startup.setAccessibleName('Mostrar el centro al abrir Cicerón')
+        startup.setAccessibleName('Abrir el centro al iniciar Cicerón manualmente')
         startup.setChecked(bool(self.cfg['open_center_on_start']))
         startup.toggled.connect(lambda checked: self.change_preference('open_center_on_start', checked, startup))
-        self.card(content, 'Abrir el centro al iniciar', '', control=startup)
+        self.card(content, 'Abrir el centro al iniciar manualmente',
+                  'El inicio automático de Windows queda minimizado.', control=startup)
         self.card(content, 'Windows y enfoque', '', [('Opciones', self.options)])
+        content.addSpacing(4)
+        content.addWidget(caption('Capturas', 'heading'))
+        capture = ClearCheckBox()
+        capture.setFixedSize(22, 22)
+        capture.setAccessibleName('Incluir Cicerón en capturas')
+        capture.setChecked(bool(self.cfg['include_in_captures']))
+        self.capture_control = capture
+        capture.toggled.connect(lambda checked: self.change_preference('include_in_captures', checked, capture))
+        self.card(content, 'Incluir Cicerón en capturas',
+                  'V1 se incluye siempre. Con Liquid Glass, usa la captura de 20 segundos desde el icono de Cicerón.',
+                  control=capture)
+        content.addSpacing(4)
         content.addWidget(caption('Datos', 'heading'))
         self.card(content, 'Trasladar datos de aplicaciones', '', [
             ('Exportar', lambda: self.transfer_data(export=True)),
@@ -544,7 +723,7 @@ class App:
         for key, control in (
             ('ui_version', self.version_control), ('theme', self.theme_control),
             ('clarity', self.clarity_control), ('glass', self.glass_control),
-            ('open_center_on_start', self.startup_control),
+            ('open_center_on_start', self.startup_control), ('include_in_captures', self.capture_control),
         ):
             blocked = control.blockSignals(True)
             if isinstance(control, QComboBox):
@@ -582,8 +761,15 @@ class App:
     def card(content, name, description, actions=(), control=None, image=None, style='card'):
         frame = QFrame()
         frame.setObjectName(style)
-        box = QHBoxLayout(frame)
-        box.setContentsMargins(11, 4, 9, 4)
+        if len(actions) > 1:
+            outer = QVBoxLayout(frame)
+            outer.setContentsMargins(11, 7, 9, 7)
+            outer.setSpacing(6)
+            box = QHBoxLayout()
+            outer.addLayout(box)
+        else:
+            box = QHBoxLayout(frame)
+            box.setContentsMargins(11, 4, 9, 4)
         box.setSpacing(12)
         if image is not None:
             badge = QLabel()
@@ -603,8 +789,13 @@ class App:
         if not description:
             detail.hide()
         box.addLayout(text, 1)
+        actions_row = box
+        if len(actions) > 1:
+            actions_row = QHBoxLayout()
+            actions_row.addStretch()
+            outer.addLayout(actions_row)
         for label, callback in actions:
-            box.addWidget(button(label, callback))
+            actions_row.addWidget(button(label, callback))
         if control is not None:
             box.addWidget(control)
         content.addWidget(frame)
@@ -621,6 +812,9 @@ class App:
             else:
                 control.setChecked(bool(previous))
             control.blockSignals(blocked)
+            return
+        if key == 'include_in_captures':
+            self.update_capture_preference()
             return
         if key == 'ui_version' and value != previous:
             # Let the activated control finish handling the click before its
@@ -663,11 +857,45 @@ class App:
         self.show()
         self.open_page('general')
 
+    def toggle_center(self):
+        dock = self.dock
+        if dock is not None:
+            pending = dock.pending_panel
+            if pending is not None and pending[0] == 'settings':
+                dock.pending_panel = None
+                dock.pending_open_scheduled = False
+                dock.reset_to_handle()
+                return
+            if dock.panel is not None and dock.panel.key == 'settings':
+                dock.panel.close()
+                dock.reset_to_handle()
+                return
+        if self.window.isVisible():
+            self.window.hide()
+            if dock is not None:
+                dock.reset_to_handle()
+            return
+        self.open_center()
+
+    def prepare_for_power_transition(self):
+        dock = self.dock
+        if dock is not None:
+            pending = dock.pending_panel
+            if pending is not None and pending[0] == 'settings':
+                dock.pending_panel = None
+                dock.pending_open_scheduled = False
+            if dock.panel is not None and dock.panel.key == 'settings':
+                dock.panel.close()
+            if dock.panel is None:
+                dock.reset_to_handle()
+        self.window.hide()
+
     def update_tray_actions(self):
         dock_visible = self.dock is not None and self.dock.isVisible()
         self.dock_visibility_action.setEnabled(True)
         self.dock_visibility_action.setText(
             'Ocultar barra lateral' if dock_visible else 'Mostrar barra lateral')
+        self.photo_action.setEnabled(self.window.glass and bool(self.cfg['include_in_captures']))
 
     def toggle_edge_dock_visibility(self):
         if self.dock is not None and self.dock.isVisible():
@@ -710,11 +938,10 @@ class App:
         signature = tuple((entry['name'], entry['path']) for entry in dock_apps)
         if signature == self.dock_signature:
             return
-        from edge_dock import tool_icon
         entries = [
-            ('Timer', tool_icon('clock'), lambda: self.open_tool('clock')),
-            ('Navegador', tool_icon('browser'), lambda: self.open_tool('browser')),
-            ('Efectos de escritorio', tool_icon('lens'), lambda: self.open_tool('effects')),
+            ('Timer', 'clock', lambda: self.open_tool('clock')),
+            ('Navegador', 'browser', lambda: self.open_tool('browser')),
+            ('Efectos de escritorio', 'lens', lambda: self.open_tool('effects')),
         ]
         for entry in dock_apps:
             wheel = entry['package']['dock']['wheel'] if entry.get('package') else 'passthrough'
@@ -978,8 +1205,11 @@ class App:
             try:
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as registry:
                     raw, _ = winreg.QueryValueEx(registry, RUN_VALUE)
-                startup = 'Activado' if isinstance(raw, str) and Path(
-                    os.path.expandvars(raw.strip().strip('"'))) == install and installed else 'La entrada apunta a otra ruta'
+                target_path = startup_target(raw)
+                owns_startup = bool(target_path and
+                                    os.path.normcase(os.path.abspath(target_path)) ==
+                                    os.path.normcase(os.path.abspath(install)))
+                startup = 'Activado' if owns_startup and installed else 'La entrada apunta a otra ruta'
             except FileNotFoundError:
                 startup = 'Desactivado'
             except OSError:
@@ -1006,30 +1236,39 @@ class App:
         from desktop_bubble import stop_desktop_effects
         stop_desktop_effects()
 
-    def prepare_glass_photo(self):
-        app = QApplication.instance()
-        bubble = getattr(app, '_ciceron_overlay', None)
-        dock = self.dock if self.dock is not None and self.dock.isVisible() else None
-        def live_materials():
-            return [widget.material for widget in app.topLevelWidgets()
-                    if widget.isVisible() and getattr(widget, 'live', False)
-                    and getattr(widget, 'material', None) is not None]
+    def update_capture_preference(self):
+        allowed = bool(self.cfg['include_in_captures'])
+        self.capture_control.setEnabled(not self.window.monochrome)
+        self.capture_privacy.set_private(not self.window.monochrome and not allowed)
+        if capture_mode() and (not allowed or not self.window.glass):
+            self.set_capture_mode(False)
 
-        if (bubble is None or not bubble.isVisible()) and dock is None and not live_materials():
+    def start_photo_mode(self):
+        if self.window.glass and self.cfg['include_in_captures']:
+            self.set_capture_mode(True)
+            self.photo_timer.start(20000)
+
+    def set_capture_mode(self, mode):
+        self.photo_timer.stop()
+        if capture_mode() == mode:
             return
-        self.tray.showMessage('Captura con Cicerón',
-                              'Tienes tres segundos para abrir el panel o colocar la burbuja.',
-                              QSystemTrayIcon.MessageIcon.Information, 2300)
+        app = QApplication.instance()
+        app.setProperty('captureMode', mode)
+        bubble = getattr(app, '_ciceron_overlay', None)
+        if mode and bubble is not None:
+            bubble.update_capture_mode()
+        if self.dock is not None:
+            self.dock.update_capture_mode()
+        for widget in app.topLevelWidgets():
+            material = getattr(widget, 'material', None)
+            if material is not None and widget.isVisible() and widget.isWindow():
+                if mode:
+                    material.stop()
+                elif self.window.glass and widget.glass:
+                    material.start()
+        if not mode and bubble is not None:
+            bubble.update_capture_mode()
 
-        def freeze():
-            if bubble is not None and getattr(app, '_ciceron_overlay', None) is bubble:
-                bubble.show_in_screenshots()
-            if self.dock is dock and dock is not None:
-                dock.show_in_screenshots()
-            for material in live_materials():
-                material.show_in_screenshots()
-
-        QTimer.singleShot(3500, freeze)
     def visual_playground(self):
         dialog = VisualDialog(self.window, dock_provider=lambda: self.dock)
         if self.dock is not None and self.dock.isVisible() and self.dock.screen:
@@ -1157,17 +1396,19 @@ class App:
 
     def goal_dialog(self, attached=False):
         d=GlassDialog(self.window, attached=attached); d.setWindowTitle('Timer'); d.resize(350,276)
+        d.setProperty('frostControls', True)
         box=QVBoxLayout(d); box.setContentsMargins(12,9,12,11); box.setSpacing(8)
         head=QHBoxLayout(); head.addWidget(caption('Timer','title')); head.addStretch()
         more=button('Opciones',self.options); more.setObjectName('quiet'); head.addWidget(more); box.addLayout(head)
         name=QLineEdit(str(self.cfg['title'])); name.setAccessibleName('Nombre del objetivo'); name.setPlaceholderText('Nombre del objetivo'); box.addWidget(name)
         t=target(self.cfg); date=QDateEdit(); date.setAccessibleName('Fecha'); date.setDisplayFormat('dd-MM-yyyy'); date.setDate(QDate(t.year,t.month,t.day) if t else QDate.currentDate())
         date.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        date.setFixedHeight(36)
+        date.lineEdit().setStyleSheet('background: transparent; border: 0; padding: 0;')
         date_field = QFrame()
-        date_field.setObjectName('dateField')
         date_row = QHBoxLayout(date_field)
         date_row.setContentsMargins(0, 0, 0, 0)
-        date_row.setSpacing(6)
+        date_row.setSpacing(8)
         date_row.addWidget(date, 1)
         calendar_popup = None
 
@@ -1221,11 +1462,13 @@ class App:
         calendar_button = button('Calendario', choose_date)
         calendar_button.setObjectName('calendarButton')
         calendar_button.setAutoDefault(False)
+        calendar_button.setFixedHeight(36)
         date_row.addWidget(calendar_button)
         box.addWidget(date_field)
         time_row=QHBoxLayout(); use_time=ClearCheckBox('Elegir una hora'); use_time.setChecked(bool(t and (t.hour,t.minute)!=(0,0)))
         clock=QTimeEdit(); clock.setDisplayFormat('HH:mm'); clock.setTime(QTime(t.hour,t.minute) if t else QTime(0,0)); clock.setEnabled(use_time.isChecked()); clock.setMaximumWidth(108)
         clock.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        clock.lineEdit().setStyleSheet('background: transparent; border: 0; padding: 0;')
         clock.setAccessibleName('Hora')
         use_time.setToolTip('Si dejas la hora desactivada, la fecha vence a las 00:00.')
         chosen_time=[QTime(clock.time())]
@@ -1268,7 +1511,7 @@ class App:
         words=QLineEdit(str(self.cfg['words'])); box.addWidget(words)
         words.setToolTip('Palabras separadas por comas que Cicerón busca en el título de la ventana activa.')
         top=QCheckBox('Mantener el contador sobre otras ventanas'); top.setChecked(bool(self.cfg['topmost'])); box.addWidget(top)
-        startup=QCheckBox('Abrir al iniciar sesión en Windows')
+        startup=QCheckBox('Iniciar Cicerón minimizado con Windows')
         old_startup=None; old_startup_type=None; startup_exists=False
         if not development_mode():
             try:
@@ -1279,7 +1522,8 @@ class App:
                 QMessageBox.warning(self.window,'Inicio automático',f'No se pudo consultar el Registro: {e}'); return
         install_dir=application_root()
         owned_paths={os.path.normcase(str(install_dir / 'Ciceron.exe'))}
-        own_entry=isinstance(old_startup,str) and os.path.normcase(os.path.expandvars(old_startup.strip().strip('"'))) in owned_paths
+        old_target = startup_target(old_startup)
+        own_entry=bool(old_target and os.path.normcase(os.path.abspath(old_target)) in owned_paths)
         installed_executable=os.path.normcase(os.path.abspath(sys.executable)) in owned_paths
         can_manage=bool(getattr(sys,'frozen',False)) and installed_executable and (not startup_exists or own_entry)
         startup.setChecked(bool(startup_exists and own_entry)); startup.setEnabled(can_manage)
@@ -1291,7 +1535,10 @@ class App:
         def apply_options(result):
             if result != QDialog.DialogCode.Accepted:
                 return
-            changed_startup=can_manage and startup.isChecked()!=startup_exists
+            desired_startup = startup_command(sys.executable)
+            changed_startup = can_manage and (
+                startup.isChecked() != own_entry or
+                (startup.isChecked() and old_startup != desired_startup))
             if changed_startup:
                 try:
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY,0,winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
@@ -1300,7 +1547,7 @@ class App:
                         expected=(old_startup,old_startup_type) if startup_exists else None
                         if current != expected:
                             raise OSError('La entrada de inicio cambió mientras estaba abierta la ventana. Vuelve a abrir los ajustes.')
-                        if startup.isChecked(): winreg.SetValueEx(k,RUN_VALUE,0,winreg.REG_SZ,'"'+sys.executable+'"')
+                        if startup.isChecked(): winreg.SetValueEx(k,RUN_VALUE,0,winreg.REG_SZ,desired_startup)
                         else: winreg.DeleteValue(k,RUN_VALUE)
                 except OSError as e: QMessageBox.warning(self.window,'Inicio automático',str(e)); return
             old=self.cfg.copy(); self.cfg.update(words=words.text(),topmost=top.isChecked())
@@ -1311,7 +1558,7 @@ class App:
                         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,RUN_KEY,0,winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
                             try: current=winreg.QueryValueEx(k,RUN_VALUE)
                             except FileNotFoundError: current=None
-                            expected=('"'+sys.executable+'"',winreg.REG_SZ) if startup.isChecked() else None
+                            expected=(desired_startup,winreg.REG_SZ) if startup.isChecked() else None
                             if current != expected:
                                 raise OSError('La entrada volvió a cambiar; no se sobrescribió.')
                             if startup_exists: winreg.SetValueEx(k,RUN_VALUE,0,old_startup_type,old_startup)
@@ -1328,8 +1575,21 @@ class App:
         else:
             d.exec()
 
+    def set_background_power(self, saving):
+        if self.background_low_power != saving:
+            self.background_low_power = saving
+            self.tick()
+
+    def focus_alert_finished(self):
+        self.alert = None
+        self.tick()
+
     def tick(self):
-        now=dt.datetime.now(); t=target(self.cfg)
+        self.timer.stop()
+        now=dt.datetime.now()
+        t=target(self.cfg)
+        seconds = (t-now).total_seconds() if t and self.cfg['show_timer'] else 0
+        active = seconds > 0 and self.cfg['guardian']
         text=remaining(t) if t and self.cfg['show_timer'] else 'Cicerón'
         if self.count.text() != text:
             self.count.setText(text)
@@ -1339,26 +1599,50 @@ class App:
             if self.count.width() != width:
                 self.count.setFixedWidth(width)
                 self._position_count()
-        active=bool(t and t>now and self.cfg['show_timer'] and self.cfg['guardian'])
+        delay = float('inf')
+        if seconds > 0 and self.count.isVisible():
+            # The text displays whole minutes and changes again at the deadline.
+            delay = seconds % 60 + 0.020
+        mono = time.monotonic()
+        check_focus = False
+        if active:
+            delay = min(delay, seconds)
+            if self.alert is None:
+                # The cooldown also tells us when a new foreground check can matter.
+                days = seconds / 86400
+                cooldown = 1800 if days > 30 else 900 if days > 7 else 300 if days > 1 else 120
+                interval = max(15 if self.background_low_power else 5, self.cfg['interval'])
+                elapsed = mono - self.last_poll
+                until_poll = min(interval, elapsed + seconds) - elapsed
+                until_alert = self.last_alert + cooldown - mono
+                check_focus = until_poll <= 0 and until_alert <= 0
+                delay = min(delay, max(interval if check_focus else until_poll, until_alert))
+                if until_alert > 0:
+                    # Re-evaluate when the remaining time enters a shorter cooldown band.
+                    boundary = next((days - band for band in (30, 7, 1) if days > band), None)
+                    if boundary is not None:
+                        delay = min(delay, boundary * 86400)
+        if math.isfinite(delay):
+            self.timer.start(max(20, min(2147483647, math.ceil(delay * 1000))))
         if not active:
             if self.alert: self.alert.close(); self.alert=None
             return
-        mono=time.monotonic()
-        if mono-self.last_poll<self.cfg['interval']: return
-        self.last_poll=mono; title=foreground().casefold(); words=[w.strip() for w in str(self.cfg['words']).split(',') if w.strip()]
-        found=next((w for w in words if w.casefold() in title),None); days=(t-now).total_seconds()/86400
-        cooldown=1800 if days>30 else 900 if days>7 else 300 if days>1 else 120
-        if found and self.alert is None and mono-self.last_alert>=cooldown:
-            self.last_alert=mono; self.alert=QMessageBox(self.window); self.alert.setWindowTitle('Cicerón · enfoque'); self.alert.setText('Vuelve a tu objetivo'); self.alert.setInformativeText(f'Has abierto una ventana que coincide con «{found}». ¿Quieres volver a tu objetivo?')
-            self.alert.setStandardButtons(QMessageBox.StandardButton.Ok)
-            stop=self.alert.addButton('Detener avisos',QMessageBox.ButtonRole.ActionRole)
-            stop.clicked.connect(self.stop_alerts)
-            self.alert.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
-            self.alert.finished.connect(lambda _: setattr(self,'alert',None)); self.alert.show()
+        if not check_focus:
+            return
+        self.last_poll = mono
+        title = foreground().casefold()
+        words = (word.strip().casefold() for word in str(self.cfg['words']).split(','))
+        if any(word and word in title for word in words):
+            self.last_alert = mono
+            self.alert = FocusAlert(self.window, t, self.stop_alerts)
+            self.alert.finished.connect(self.focus_alert_finished)
+            self.alert.show()
+            self.tick()
     def stop_alerts(self):
         old=self.cfg['guardian']; self.cfg['guardian']=False
         if not self.save(): self.cfg['guardian']=old; return
         if self.alert: self.alert.close(); self.alert=None
+        self.tick()
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--comprobacion-lente':
@@ -1379,14 +1663,24 @@ def main():
     kernel = ctypes.windll.kernel32
     kernel.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_wchar_p]
     kernel.CreateEventW.restype = ctypes.c_void_p
+    kernel.CreateSemaphoreW.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_long,
+                                        ctypes.c_wchar_p]
+    kernel.CreateSemaphoreW.restype = ctypes.c_void_p
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
     kernel.CreateMutexW.restype = ctypes.c_void_p
     kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
     kernel.WaitForSingleObject.restype = ctypes.c_ulong
     kernel.CloseHandle.argtypes = kernel.SetEvent.argtypes = [ctypes.c_void_p]
+    kernel.ReleaseSemaphore.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+    kernel.ReleaseSemaphore.restype = ctypes.c_int
     suffix = instance_suffix()
     activate = kernel.CreateEventW(None, False, False, r'Local\Ciceron_AbrirCentro_v1' + suffix)
     if not activate:
+        raise ctypes.WinError()
+    toggle_center = kernel.CreateSemaphoreW(None, 0, 2147483647,
+                                            r'Local\Ciceron_AlternarCentro_v2' + suffix)
+    if not toggle_center:
+        kernel.CloseHandle(activate)
         raise ctypes.WinError()
     mutex = kernel.CreateMutexW(None, False, r'Local\Ciceron_Unica_v2' + suffix)
     mutex_status = kernel.GetLastError()
@@ -1394,21 +1688,34 @@ def main():
         if not mutex:
             raise ctypes.WinError(mutex_status)
         if mutex_status == 183:
-            if '--abrir' in sys.argv:
+            if '--alternar-centro' in sys.argv:
+                if not kernel.ReleaseSemaphore(toggle_center, 1, None):
+                    raise ctypes.WinError()
+            elif '--abrir' in sys.argv:
                 kernel.SetEvent(activate)
             return 0
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ciceron.MiCentro' + suffix)
         app = QApplication(sys.argv)
         app.setWindowIcon(icon())
         app.setQuitOnLastWindowClosed(False)
-        controller = App()
+        controller = App(suppress_implicit_open=(
+            silent_start_requested(sys.argv) or '--abrir' in sys.argv or
+            '--alternar-centro' in sys.argv))
         app.aboutToQuit.connect(controller.stop_visual_effects)
 
-        activation = watch_activation_event(app, kernel, activate, controller.open_center)
+        activation = watch_activation_event(app, kernel, activate, controller.open_center,
+                                            controller.set_background_power,
+                                            additional_events=((toggle_center, controller.toggle_center),))
         app.aboutToQuit.connect(activation.stop)
-        controller.timer.timeout.connect(controller.launch_requested_apps)
-        QTimer.singleShot(0, controller.launch_requested_apps)
-        if '--abrir' in sys.argv:
+        power_events = SuspendResumeFilter(controller)
+        app.installNativeEventFilter(power_events)
+        power_events.register(controller.dock.winId())
+        app.aboutToQuit.connect(power_events.stop)
+        app.aboutToQuit.connect(lambda: app.removeNativeEventFilter(power_events))
+        watch_launch_requests(app, LAUNCH_REQUESTS, controller.launch_requested_apps)
+        if '--alternar-centro' in sys.argv:
+            controller.toggle_center()
+        elif '--abrir' in sys.argv:
             controller.open_center()
         if '--comprobacion' in sys.argv:
             QTimer.singleShot(4000, app.quit)
@@ -1416,5 +1723,6 @@ def main():
     finally:
         if mutex:
             kernel.CloseHandle(mutex)
+        kernel.CloseHandle(toggle_center)
         kernel.CloseHandle(activate)
 if __name__=='__main__': sys.exit(main())
