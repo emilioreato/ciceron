@@ -29,7 +29,7 @@ PACKAGE_TAGS = DATA / 'etiquetas-paquetes.json'
 LAUNCH_REQUESTS = DATA / 'arranques-paquetes'
 DEFAULT = dict(title='Mi objetivo', target='', show_timer=True, guardian=True,
                words='youtube, x.com, twitter, instagram', interval=3, topmost=True, geometry='', count_x_ratio=None,
-               theme='system', glass=True, clarity='balanced', open_center_on_start=False,
+               theme='system', glass=True, clarity='balanced',
                ui_version='v2', dock_motion=True, include_in_captures=True)
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 RUN_VALUE = 'Ciceron'
@@ -49,9 +49,6 @@ def startup_target(value):
 
 def startup_command(executable):
     return f'"{executable}" {STARTUP_ARGUMENT}'
-
-def silent_start_requested(arguments):
-    return STARTUP_ARGUMENT in arguments and '--abrir' not in arguments
 
 def read(path, default):
     try:
@@ -214,8 +211,14 @@ def target(cfg):
     except (ValueError, TypeError, OverflowError, OSError):
         return None
 
-def remaining(t):
+def remaining(t, *, show_seconds=False):
     seconds=(t-dt.datetime.now()).total_seconds()
+    if show_seconds:
+        minutes, seconds = divmod(max(0, math.ceil(seconds)), 60)
+        hours, minutes = divmod(minutes, 60)
+        days, hours = divmod(hours, 24)
+        clock = f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+        return f'{days}d {clock}' if days else clock
     if seconds<=0: return 'Fecha alcanzada'
     days,minutes=divmod(int(seconds//60),1440); hours,minutes=divmod(minutes,60)
     if days:
@@ -318,7 +321,7 @@ class TimerDialog(GlassDialog):
 
 
 class App:
-    def __init__(self, *, suppress_implicit_open=False):
+    def __init__(self):
         data, broken=read(CONFIG,{}); self.cfg=DEFAULT.copy()
         if isinstance(data,dict): self.cfg.update({k:v for k,v in data.items() if k in DEFAULT})
         if self.cfg['theme'] not in ('system', 'light', 'dark'):
@@ -345,6 +348,7 @@ class App:
         self.start_menu = StartMenuApps(windows_appdata_root() / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Ciceron',
                                         self.install_dir() / 'Ciceron.exe')
         self.managed_apps = []
+        self.birthday_host = None
         self.package_error = None
         try:
             self.packages.sweep()
@@ -391,6 +395,7 @@ class App:
         self.tray.setToolTip(self.window.windowTitle())
         self.tray.activated.connect(self.tray_clicked)
         self.tray.show()
+        QTimer.singleShot(0, self.window, self.prepare_birthday)
         self.render()
         self.timer = QTimer(self.count)
         self.timer.setSingleShot(True)
@@ -400,12 +405,7 @@ class App:
         self.tick()
         if self.cfg['show_timer'] and target(self.cfg): self._show_count()
         if self.broken_config: QMessageBox.warning(self.window,'Configuración','No se pudo leer la configuración; se conservó el archivo original.')
-        if not suppress_implicit_open and self.cfg['open_center_on_start']:
-            self.open_center()
-        elif not suppress_implicit_open and (not CONFIG.exists() or not QSystemTrayIcon.isSystemTrayAvailable()):
-            self.open_center()
-        else:
-            self.show_edge_dock()
+        self.show_edge_dock()
     def save(self):
         if self.broken_config:
             QMessageBox.warning(self.window, 'Configuración no disponible',
@@ -656,14 +656,6 @@ class App:
         self.card(content, 'Transparencia', '', control=clarity)
         content.addSpacing(4)
         content.addWidget(caption('Inicio', 'heading'))
-        startup = ClearCheckBox()
-        self.startup_control = startup
-        startup.setFixedSize(22, 22)
-        startup.setAccessibleName('Abrir el centro al iniciar Cicerón manualmente')
-        startup.setChecked(bool(self.cfg['open_center_on_start']))
-        startup.toggled.connect(lambda checked: self.change_preference('open_center_on_start', checked, startup))
-        self.card(content, 'Abrir el centro al iniciar manualmente',
-                  'El inicio automático de Windows queda minimizado.', control=startup)
         self.card(content, 'Windows y enfoque', '', [('Opciones', self.options)])
         content.addSpacing(4)
         content.addWidget(caption('Capturas', 'heading'))
@@ -703,7 +695,7 @@ class App:
         for key, control in (
             ('ui_version', self.version_control), ('theme', self.theme_control),
             ('clarity', self.clarity_control), ('glass', self.glass_control),
-            ('open_center_on_start', self.startup_control), ('include_in_captures', self.capture_control),
+            ('include_in_captures', self.capture_control),
         ):
             blocked = control.blockSignals(True)
             if isinstance(control, QComboBox):
@@ -896,7 +888,7 @@ class App:
     def show_edge_dock(self):
         if self.dock is None:
             from edge_dock import EdgeDock
-            self.dock = EdgeDock(icon(), self.toggle_settings_panel)
+            self.dock = EdgeDock(icon(), self.toggle_settings_panel, tray_geometry=self.tray.geometry)
             QApplication.instance().aboutToQuit.connect(self.dock.shutdown)
         self.dock.pure = bool(QApplication.instance().property('pureGlass'))
         self.dock.theme_dark = self.window.dark
@@ -1034,7 +1026,8 @@ class App:
             start.setEnabled(not development_mode())
             add_shortcut = start.addAction('Añadir acceso', lambda checked=False, i=item: self.add_start_shortcut(i))
             add_shortcut.setEnabled(exists)
-            start.addAction('Quitar acceso', lambda checked=False, i=item: self.remove_start_shortcut(i))
+            if not spec:
+                start.addAction('Quitar acceso', lambda checked=False, i=item: self.remove_start_shortcut(i))
             folder = menu.addAction('Abrir carpeta', lambda checked=False, p=path.parent: self.open_location(p))
             folder.setEnabled(path.parent.is_dir())
             menu.addSeparator()
@@ -1093,18 +1086,17 @@ class App:
             self.package_error = str(error)
         for item in self.managed_apps:
             old = previous.get(item['package']['id'])
-            if old is not None and old['path'] != item['path']:
-                self.add_start_shortcut(item, previous=old)
-            elif old is None:
-                # Refresh an existing package shortcut after the portable folder
-                # has moved; StartMenuApps ignores items without a managed link.
-                self.add_start_shortcut(item, previous=item)
+            if old != item and self.start_menu.ciceron.is_file():
+                self.add_start_shortcut(item, report_error=False)
+        if hasattr(self, 'tray'):
+            self.prepare_birthday()
 
-    def add_start_shortcut(self, item, previous=None):
+    def add_start_shortcut(self, item, previous=None, *, report_error=True):
         try:
             self.start_menu.update(item, self.tags_for(item), previous)
         except (OSError, ValueError, COMError) as error:
-            QMessageBox.warning(self.window, 'Inicio de Windows', str(error))
+            if report_error:
+                QMessageBox.warning(self.window, 'Inicio de Windows', str(error))
 
     def remove_start_shortcut(self, item):
         try:
@@ -1278,9 +1270,41 @@ class App:
     def browser_settings(self):
         dialog=BrowserDialog(self.window)
         dialog.exec()
+    def prepare_birthday(self):
+        from birthday_host import APP_ID, BirthdayHost, remove_legacy_startup
+
+        item = next((entry for entry in self.managed_apps if entry['package']['id'] == APP_ID), None)
+        if item is None:
+            if self.birthday_host is not None:
+                self.birthday_host.close()
+                self.birthday_host = None
+            return None
+        if self.birthday_host is None:
+            self.birthday_host = BirthdayHost(self, item)
+        first_load = self.birthday_host.agenda is None
+        try:
+            agenda = self.birthday_host.prepare()
+            if first_load and agenda is not None and source_installation_root() is not None:
+                try:
+                    remove_legacy_startup(self.packages.data_folder(item['package']))
+                except OSError:
+                    pass
+            return agenda
+        except (OSError, ValueError):
+            return None
+
     def launch(self,item):
         try:
             if item.get('package'):
+                from birthday_host import APP_ID, agenda_module
+                if item['package']['id'] == APP_ID and agenda_module() is not None:
+                    agenda = self.prepare_birthday()
+                    if agenda is None:
+                        raise ValueError('Cierra la agenda anterior o revisa su archivo de datos antes de abrir Happy Birthday.')
+                    agenda.check_reminders()
+                    self.show_edge_dock()
+                    self.dock.toggle_panel(APP_ID, lambda: agenda, persistent=True)
+                    return
                 self.packages.launch(item)
             else:
                 if not Path(item['path']).is_file(): raise FileNotFoundError('No se encuentra el archivo; puede que se haya movido.')
@@ -1723,16 +1747,10 @@ class App:
             from focus_alert import FocusAlert
 
             self.last_alert = mono
-            self.alert = FocusAlert(self.window, lambda: remaining(t), self.stop_alerts)
+            self.alert = FocusAlert(self.window, lambda: remaining(t, show_seconds=True))
             self.alert.finished.connect(self.focus_alert_finished)
             self.alert.present()
             self.tick()
-    def stop_alerts(self):
-        old=self.cfg['guardian']; self.cfg['guardian']=False
-        if not self.save(): self.cfg['guardian']=old; return
-        if self.alert: self.alert.close(); self.alert=None
-        self.tick()
-
 def open_source_session(root):
     lock = root / 'centro-fuentes.lock'
     # The launcher and installer briefly open this file exclusively to check
@@ -1805,10 +1823,9 @@ def main():
         app = QApplication(sys.argv)
         app.setWindowIcon(icon())
         app.setQuitOnLastWindowClosed(False)
-        controller = App(suppress_implicit_open=(
-            silent_start_requested(sys.argv) or '--abrir' in sys.argv or
-            '--alternar-centro' in sys.argv))
+        controller = App()
         app.aboutToQuit.connect(controller.stop_visual_effects)
+        app.aboutToQuit.connect(lambda: controller.birthday_host and controller.birthday_host.close())
 
         activation = watch_activation_event(app, kernel, activate, controller.open_center,
                                             controller.set_background_power,

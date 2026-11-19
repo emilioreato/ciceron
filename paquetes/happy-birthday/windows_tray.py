@@ -165,8 +165,9 @@ class Tray:
             return
         try:
             AppendMenu(menu, 0, 1, "Abrir Happy Birthday")
-            AppendMenu(menu, 0x0800, 0, None)
-            AppendMenu(menu, 0, 2, "Salir y pausar avisos")
+            if self.quit_app is not None:
+                AppendMenu(menu, 0x0800, 0, None)
+                AppendMenu(menu, 0, 2, "Salir y pausar avisos")
             point = W.POINT()
             if not GetCursor(C.byref(point)):
                 return

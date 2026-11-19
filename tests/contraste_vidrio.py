@@ -113,6 +113,12 @@ source.fill(QColor('white'))
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
 assert sample(140, 127).lightness() > over_black.lightness() + 50
+corner = button.mapTo(window, QPoint(0, 0))
+with_button = sample(corner.x(), corner.y())
+button.hide()
+result = layer.grabFramebuffer()
+assert with_button == sample(corner.x(), corner.y()), 'La esquina transparente borra el vidrio de base.'
+button.show()
 label = QLabel('Texto sobre el vidrio', window)
 label.setGeometry(125, 33, 180, 24)
 label.show()
@@ -152,8 +158,14 @@ assert dock.layer.isValid() and not dock.layer.error, dock.layer.error
 bounds = client_bounds(int(dock.winId()))
 assert bounds is not None
 left, top, width, height = bounds
-edge_y = top + round(dock.edge_hover.geometry().center().y() * height / dock.height())
-assert root_window(window_at(wintypes.POINT(left + width - 1, edge_y)), 2) == int(dock.winId())
+for progress in (0.0, 1.0):
+    dock.progress = progress
+    dock.layout_icons()
+    app.processEvents()
+    for offset in (-28, 0, 28):
+        y = dock.edge_hover.geometry().center().y() + offset
+        edge_y = top + round(y * height / dock.height())
+        assert root_window(window_at(wintypes.POINT(left + width - 1, edge_y)), 2) == int(dock.winId())
 source = QImage(bounds[2], bounds[3], QImage.Format.Format_RGB32)
 
 def dock_pixel(color, light):
@@ -179,6 +191,24 @@ def center_pixel():
     frame = dock.layer.grabFramebuffer()
     center = dock.optic_rect().center() * frame.devicePixelRatio()
     return frame.pixelColor(round(center.x()), round(center.y()))
+
+# The rim is already present alongside the fading icons with no desktop frame.
+dock.progress = .82
+dock.layout_icons()
+assert dock.gear.isVisible()
+with patch('edge_dock.energy_saver_active', return_value=True), \
+        patch('edge_dock.DockBackdropCapture') as capture:
+    dock.prepare_layer()
+    capture.assert_not_called()
+for pure in (False, True):
+    dock.pure = pure
+    frame = dock.layer.grabFramebuffer()
+    center = dock.optic_rect().center() * frame.devicePixelRatio()
+    row = [frame.pixelColor(x, round(center.y())).alpha() for x in range(round(center.x()) + 1)]
+    assert max(row) > row[-1] + 20
+dock.pure = False
+dock.progress = 1.0
+dock.layout_icons()
 
 provisional = center_pixel()
 dock.layer.handoff_started = 10.0
@@ -255,7 +285,7 @@ assert panel is not None and panel.isVisible()
 assert affinity(dock) == affinity(panel) == 0
 assert dock.backdrop is None and not dock.capture_timer.isActive()
 assert not panel.capture_enabled
-dock.dismiss_inactive_panel()
+dock.dismiss_outside_click(dock.panel_session, 0)
 assert dock.panel is panel
 app.setProperty('captureMode', False)
 dock.update_capture_mode()
@@ -281,5 +311,6 @@ assert affinity(dock) == affinity(panel) == affinity(count) == 0
 assert dock.backdrop is None and not panel.capture_enabled
 count.close()
 dock.shutdown()
+assert dock.panel_mouse_press.hook is None
 print('Captura: exclusión de flecha, visibilidad de barra y panel, y preferencia de Timer verificadas en Win32.')
 print(f'Vidrio: contraste mínimo {minimum:.2f}:1 en claro y oscuro contra blanco y negro.')

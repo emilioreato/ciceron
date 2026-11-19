@@ -1,7 +1,9 @@
 """Optional per-user Start menu shortcuts for Cicerón's library."""
 
 import hashlib
+import ctypes as C
 from _ctypes import COMError
+from functools import cache
 import os
 from pathlib import Path
 import re
@@ -13,6 +15,76 @@ from app_paths import application_root, development_mode
 
 MARKER = 'Ciceron.Library:'
 BUILTIN_TOOLS = frozenset(('clock', 'browser', 'effects'))
+BIRTHDAY_PACKAGE = 'emilioreato.happy-birthday'
+BIRTHDAY_APP_ID = 'Ciceron.HappyBirthday'
+
+
+@cache
+def property_store_types():
+    from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
+
+    class Key(C.Structure):
+        _fields_ = [('fmtid', GUID), ('pid', C.c_uint32)]
+
+    class Value(C.Structure):
+        _fields_ = [('vt', C.c_ushort), ('reserved', C.c_ushort * 3),
+                    ('data', C.c_void_p * 2)]
+
+    class IPropertyStore(IUnknown):
+        _iid_ = GUID('{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}')
+        _methods_ = [
+            COMMETHOD([], HRESULT, 'GetCount', (['out'], C.POINTER(C.c_uint32), 'count')),
+            COMMETHOD([], HRESULT, 'GetAt', (['in'], C.c_uint32, 'index'), (['out'], C.POINTER(Key), 'key')),
+            COMMETHOD([], HRESULT, 'GetValue', (['in'], C.POINTER(Key), 'key'),
+                      (['out'], C.POINTER(Value), 'value')),
+            COMMETHOD([], HRESULT, 'SetValue', (['in'], C.POINTER(Key), 'key'),
+                      (['in'], C.POINTER(Value), 'value')),
+            COMMETHOD([], HRESULT, 'Commit'),
+        ]
+    return Key, Value, IPropertyStore
+
+
+def set_app_identity(store, Key, Value, app_id):
+    from comtypes import GUID
+    app_key = Key(GUID('{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}'), 5)
+    if app_id is None:
+        store.SetValue(app_key, Value())
+        return
+    name = C.create_unicode_buffer(app_id)
+    store.SetValue(app_key, Value(31, data=(C.c_void_p * 2)(C.addressof(name), None)))
+
+
+def set_window_identity(hwnd, app_id):
+    Key, Value, IPropertyStore = property_store_types()
+    store = C.POINTER(IPropertyStore)()
+    C.OleDLL('shell32').SHGetPropertyStoreForWindow(
+        C.c_void_p(hwnd), C.byref(IPropertyStore._iid_), C.byref(store))
+    set_app_identity(store, Key, Value, app_id)
+
+
+def set_link_properties(path, app_id, tags):
+    from comtypes import GUID
+    from comtypes.client import CreateObject
+    from comtypes.persist import IPersistFile
+    from comtypes.shelllink import ShellLink
+
+    Key, Value, IPropertyStore = property_store_types()
+    link = CreateObject(ShellLink, interface=IPersistFile)
+    link.Load(str(path), 2)
+    store = link.QueryInterface(IPropertyStore)
+    props = C.OleDLL('propsys')
+    keyword_key = Key(GUID('{F29F85E0-4FF9-1068-AB91-08002B27B3D9}'), 5)
+    set_app_identity(store, Key, Value, app_id)
+    if tags:
+        vector = (C.c_wchar_p * len(tags))(*tags)
+        keywords = Value()
+        props.InitPropVariantFromStringVector(vector, C.c_ulong(len(vector)), C.byref(keywords))
+        try:
+            store.SetValue(keyword_key, keywords)
+        finally:
+            C.OleDLL('ole32').PropVariantClear(C.byref(keywords))
+    store.Commit()
+    link.Save(str(path), True)
 
 
 def shortcut_id(item):
@@ -83,6 +155,10 @@ class StartMenuApps:
             description = ', '.join(tags) if tags else item['name']
             link.Description = f'{MARKER}{shortcut_id(item)} {description}'[:240]
             link.Save()
+            if package:
+                app_id = (BIRTHDAY_APP_ID if package['id'] == BIRTHDAY_PACKAGE
+                          else 'Ciceron.Package.' + shortcut_id(item))
+                set_link_properties(tmp, app_id, tags)
             if path == existing:
                 tmp.replace(path)
             else:

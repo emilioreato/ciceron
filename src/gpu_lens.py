@@ -75,12 +75,20 @@ void main() {
         }
         float bevel = smoothstep(0.74, 0.94, edge);
         float coverage = glass_opacity * (1.0 - smoothstep(0.975 - 1.5 / diameter, 0.975, edge));
+        float depth = (0.975 - edge) * diameter * 0.5;
         vec4 fallback = vec4(provisional.rgb * provisional.a, provisional.a) * coverage;
+        if (provisional.a > 0.0) {
+            // The dock has a visible rim even before it has a captured frame.
+            float rim = 1.0 - smoothstep(0.7, 2.0, depth);
+            float rim_tone = provisional.r < 0.5 ? 0.89 : 0.32;
+            float alpha = mix(provisional.a, 0.66, rim);
+            vec3 color = mix(provisional.rgb, vec3(rim_tone), 0.65 * rim);
+            fallback = vec4(color * alpha, alpha) * coverage;
+        }
         if (glass_mix <= 0.0) {
             gl_FragColor = fallback;
             return;
         }
-        float depth = (0.975 - edge) * diameter * 0.5;
         vec2 lookup = local - normal * lip_inset(depth, diameter * 0.35) / extent;
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
         if (clear_mode > 1.5) {

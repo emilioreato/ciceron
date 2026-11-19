@@ -9,8 +9,10 @@ from center_ui import GlassDialog, clear_styles, dark_mode, panel, stylesheet
 
 
 class MiniappDialog(GlassDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, parent=None, *, attached=False):
+        super().__init__(parent, attached=attached)
+        if attached:
+            return
         self.floating = True
         self.material_changed = self.update_style
         self.preferences = Path(os.environ['CICERON_UI_CONFIG'])

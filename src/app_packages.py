@@ -525,6 +525,7 @@ class PackageStore:
             raise PackageError('La carpeta de datos apunta fuera de Cicerón.')
         environment = dict(os.environ, CICERON_APP_ID=spec['id'], CICERON_APP_DATA=str(data),
                            CICERON_APP_SETTINGS=str(data / 'settings.json'), PYINSTALLER_RESET_ENVIRONMENT='1')
+        environment['CICERON_CALENDAR_DIR'] = str(self.data.parent.resolve() / 'calendario')
         ui_root = Path(__file__).resolve().parent
         if (ui_root / 'miniapp_ui.py').is_file():
             environment['CICERON_UI_ROOT'] = str(ui_root)

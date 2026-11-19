@@ -5,7 +5,8 @@ La versión desde fuentes usa Python 3.12 para Windows con el lanzador `py`. Si 
 | Quiero… | Qué ejecutar |
 | --- | --- |
 | Instalar o actualizar desde una revisión del repositorio | `Instalar.bat` desde esa revisión |
-| Abrir Cicerón | `Abrir Ciceron.bat` o **Cicerón** en el menú Inicio |
+| Iniciar Cicerón en la flecha lateral | `Abrir Ciceron.bat` |
+| Abrir el menú principal | Ícono de Cicerón en la bandeja o **Cicerón** en el menú Inicio |
 | Mover Cicerón | Cierra el centro y las miniapps, mueve la carpeta completa y ejecuta `Abrir Ciceron.bat` desde la nueva ubicación |
 | Recuperar la revisión anterior | `Aplicacion\Recuperar version anterior.bat` |
 | Desinstalar | `Desinstalar.bat` o su copia dentro de `Aplicacion\` |

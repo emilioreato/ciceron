@@ -647,7 +647,7 @@ try {
     }
     Write-IntegrationReceipt
     if (!$NoLaunch) {
-        try { Start-Process -FilePath $destination -ArgumentList '--abrir' -WindowStyle Normal } catch { Write-Warning "La instalación terminó, pero no se pudo abrir automáticamente: $($_.Exception.Message)" }
+        try { Start-Process -FilePath $destination -ArgumentList $startupArgument -WindowStyle Hidden } catch { Write-Warning "La instalación terminó, pero no se pudo iniciar Cicerón: $($_.Exception.Message)" }
     }
 } catch {
     $problem = $_.Exception.Message

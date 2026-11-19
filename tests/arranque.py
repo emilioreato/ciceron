@@ -8,7 +8,8 @@ import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QCursor
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton
@@ -63,17 +64,12 @@ with TemporaryDirectory() as temporary:
     module.write(module.CONFIG, dict(module.DEFAULT, show_timer=False, guardian=False,
                                      open_center_on_start=True))
 
-    assert module.silent_start_requested(['Ciceron.exe', module.STARTUP_ARGUMENT])
-    assert not module.silent_start_requested(['Ciceron.exe', '--abrir'])
-    assert not module.silent_start_requested(['Ciceron.exe', '--alternar-centro'])
-    assert not module.silent_start_requested(
-        ['Ciceron.exe', module.STARTUP_ARGUMENT, '--abrir'])
     assert module.startup_target('"C:\\Program Files\\Ciceron\\Ciceron.exe" --inicio-silencioso') == (
         'C:\\Program Files\\Ciceron\\Ciceron.exe')
     assert module.startup_target('"C:\\Program Files\\Ciceron\\Ciceron.exe') is None
 
     with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=True):
-        controller = module.App(suppress_implicit_open=True)
+        controller = module.App()
     app.processEvents()
     assert controller.dock.isVisible()
     assert controller.dock.panel is None
@@ -122,6 +118,40 @@ with TemporaryDirectory() as temporary:
     controller.tray_clicked(module.QSystemTrayIcon.ActivationReason.DoubleClick)
     assert controller.dock.panel is not None and controller.dock.panel.key == 'settings'
 
+    from edge_dock import PanelMousePress
+
+    dock = controller.dock
+    panel = dock.panel
+    press = wintypes.MSG()
+    press.message = PanelMousePress.MESSAGE
+    press.wParam = 100
+    press.lParam = dock.panel_session - 1
+    with patch('edge_dock.window_belongs_to', side_effect=lambda target, owner: target == owner):
+        assert dock.nativeEvent(b'windows_generic_MSG', addressof(press)) == (True, 0)
+        app.processEvents()
+        assert dock.panel is panel
+
+        press.lParam = dock.panel_session
+        for internal in (int(dock.winId()), int(panel.winId())):
+            press.wParam = internal
+            dock.nativeEvent(b'windows_generic_MSG', addressof(press))
+            app.processEvents()
+            assert dock.panel is panel
+
+        press.wParam = 100
+        with patch.object(dock, 'tray_geometry', return_value=QRect(QCursor.pos(), QCursor.pos())):
+            dock.nativeEvent(b'windows_generic_MSG', addressof(press))
+            app.processEvents()
+            assert dock.panel is panel
+        dock.nativeEvent(b'windows_generic_MSG', addressof(press))
+        app.processEvents()
+        assert dock.panel is None and dock.progress == 0.0 and dock.handle.isVisible()
+        assert not controller.window.isVisible() and dock.panel_mouse_press.receiver is None
+
+    controller.open_center()
+    QTest.qWait(300)
+    assert dock.panel is not None and dock.panel.key == 'settings'
+
     power_filter = module.SuspendResumeFilter(controller)
     message = wintypes.MSG()
     message.message = power_filter.WM_POWERBROADCAST
@@ -142,15 +172,12 @@ with TemporaryDirectory() as temporary:
     assert controller.dock.panel is not None
     assert controller.dock.panel.key == 'settings'
 
-    from focus_alert import FocusAlert, gaussian_backdrop
+    from focus_alert import FocusAlert
     snapshot = QImage(650, 400, QImage.Format.Format_RGBX8888)
     snapshot.fill(0xff181921)
     for x in range(300, 350):
         for y in range(400):
             snapshot.setPixel(x, y, 0xffccb98a)
-    light = gaussian_backdrop(snapshot, 5)
-    heavy = gaussian_backdrop(snapshot, 17)
-    assert light.pixelColor(62, 40).red() > heavy.pixelColor(18, 11).red()
     controller.cfg.update(show_timer=True, guardian=True, words='distractora',
                           target=(module.dt.datetime.now() + module.dt.timedelta(minutes=10)).isoformat())
     controller.last_poll = float('-inf')
@@ -162,16 +189,33 @@ with TemporaryDirectory() as temporary:
         assert isinstance(alert, FocusAlert) and alert.isVisible()
         assert alert.geometry() == alert.screen_to_cover.geometry()
         assert (alert.card.geometry().center() - alert.rect().center()).manhattanLength() <= 2
-        assert alert.countdown.text() == '9m' and '#c51b31' in alert.countdown.styleSheet()
-        assert alert.refresh_timer.isActive() and capture.call_count == 1
-        close = alert.findChild(QPushButton, 'dismiss')
+        rendered = alert.grab().toImage()
+        card = alert.card.geometry()
+        corner = card.topLeft() + QPoint(2, 2)
+        outside = corner - QPoint(0, 4)
+        inside = corner + QPoint(34, 8)
+        assert rendered.pixelColor(corner) == rendered.pixelColor(outside)
+        assert rendered.pixelColor(inside).red() > rendered.pixelColor(outside).red() + 60
+        light, heavy = alert.backdrop, alert.card_backdrop
+        assert light.pixelColor(light.width() // 2, 1).red() > heavy.pixelColor(heavy.width() // 2, 1).red()
+
+        assert alert.countdown.text() == '00:10:00' and '#980e29' in alert.countdown.styleSheet()
+        assert alert.refresh_timer.isActive() and alert.refresh_timer.interval() == 1000
+        assert alert.refresh_timer.timerType() == Qt.TimerType.PreciseTimer
+        QTest.qWait(1150)
+        assert alert.countdown.text() == '00:09:59' and alert.countdown.isVisible()
+        assert capture.call_count == 1
+        close, = alert.findChildren(QPushButton)
+        assert close.text() == 'Cerrar'
         QTest.mouseClick(close, Qt.MouseButton.LeftButton)
         assert controller.alert is None and controller.cfg['guardian']
         assert not alert.refresh_timer.isActive() and capture.call_count == 1
         controller.last_alert = controller.last_poll = float('-inf')
+        controller.cfg['target'] = (module.dt.datetime.now() + module.dt.timedelta(seconds=15)).isoformat()
         controller.tick()
-        disable = controller.alert.findChild(QPushButton, 'disable')
-        QTest.mouseClick(disable, Qt.MouseButton.LeftButton)
+        assert controller.alert.countdown.text() == '00:00:15'
+        controller.cfg['guardian'] = False
+        controller.tick()
         assert controller.alert is None and not controller.cfg['guardian']
     controller.cfg['show_timer'] = False
     controller.tick()
@@ -179,7 +223,7 @@ with TemporaryDirectory() as temporary:
 
     module.CONFIG.unlink()
     with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=False):
-        controller = module.App(suppress_implicit_open=True)
+        controller = module.App()
     assert controller.dock.isVisible()
     assert controller.dock.panel is None
     assert not controller.window.isVisible()

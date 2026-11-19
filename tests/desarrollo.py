@@ -46,9 +46,9 @@ loader.exec_module(module)
 original_init = module.App.__init__
 
 def observe_start(self, **kwargs):
+    (profile / 'activation').touch()
     original_init(self, **kwargs)
-    if self.dock is None:
-        self.show_edge_dock()
+    assert self.dock.isVisible() and self.dock.panel is None and self.dock.pending_panel is None
     self.test_stop_timer = module.QTimer(self.count)
     self.test_stop_timer.timeout.connect(lambda: module.QApplication.quit() if (profile / 'stop').exists() else None)
     self.test_stop_timer.start(80)
@@ -101,6 +101,7 @@ with TemporaryDirectory() as temporary:
         children.append(dev)
         wait_until(lambda: all((path / 'ready').is_file() for path in paths), daily, dev)
         before = [(path / 'activation').read_bytes() for path in paths]
+        assert before == [b'', b'']
         link = subprocess.run([*arguments, '--abrir'], cwd=ROOT, env=dev_env, timeout=12)
         assert link.returncode == 0
         wait_until(lambda: (paths[1] / 'activation').read_bytes() != before[1], daily, dev)

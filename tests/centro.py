@@ -221,7 +221,11 @@ with TemporaryDirectory() as temporary:
     assert center.dock.panel is None and center.dock.pending_panel[0] == 'clock'
     center.open_tool('clock', from_start=True)
     assert center.dock.pending_panel[0] == 'clock'
-    QTest.qWait(450)
+    for _ in range(30):
+        panel = center.dock.panel
+        if panel is not None and panel.windowOpacity() == 1.0:
+            break
+        QTest.qWait(40)
     assert center.dock.panel is not None and center.dock.panel.key == 'clock'
     assert center.dock.panel.content.property('dockEmbedded') is True
     assert center.dock.panel.windowOpacity() == 1.0
@@ -389,6 +393,14 @@ with TemporaryDirectory() as temporary:
     assert dock.mask().contains(dock.handle.geometry().center())
     edge = module.QPoint(dock.width() - 1, dock.handle.geometry().center().y())
     assert dock.mask().contains(edge)
+    for offset in (-28, 28):
+        edge_margin = edge + module.QPoint(0, offset)
+        assert dock.mask().contains(edge_margin)
+        assert dock.childAt(edge_margin) is dock.handle
+        with patch('edge_dock.QCursor') as cursor:
+            cursor.pos.return_value = dock.mapToGlobal(edge_margin)
+            assert dock.pointer_over_dock()
+    assert dock.optic_rect().right() == dock.width() - 2
     assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
     frame = dock.grab().toImage()
     assert frame.pixelColor(frame.width() - 1, round(edge.y() * frame.devicePixelRatio())).alpha() == 1
@@ -425,6 +437,7 @@ with TemporaryDirectory() as temporary:
         enter = QEnterEvent(QPointF(edge), QPointF(edge), QPointF(cursor.pos.return_value))
         dock.enterEvent(enter)
         assert dock.hover_timer.isActive() and dock.progress == dock.transition_to == 0.0
+        assert dock.hover_timer.interval() + dock.hover_probe.interval() < 70
         assert not dock.animation.isActive() and not dock.glass_timer.isActive()
         cursor.pos.return_value = dock.mapToGlobal(QPoint(-5, -5))
         dock.leaveEvent(QEvent(QEvent.Type.Leave))

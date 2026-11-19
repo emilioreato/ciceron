@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0Ciceron.exe" --abrir
+start "" "%~dp0Ciceron.exe" --inicio-silencioso

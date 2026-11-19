@@ -67,7 +67,7 @@ def gaussian_backdrop(image, divisor):
 
 
 class FocusAlert(QDialog):
-    def __init__(self, parent, countdown, stop, *, screen=None):
+    def __init__(self, parent, countdown, *, screen=None):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint |
                          Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -84,12 +84,12 @@ class FocusAlert(QDialog):
         self.card.setFixedWidth(min(488, max(1, self.screen_to_cover.geometry().width() - 32)))
         layout.addWidget(self.card, alignment=Qt.AlignmentFlag.AlignCenter)
         box = QVBoxLayout(self.card)
-        box.setContentsMargins(28, 30, 28, 22)
-        box.setSpacing(12)
+        box.setContentsMargins(36, 32, 36, 28)
+        box.setSpacing(14)
         title = self.label('Volvé a tu objetivo', 28, '#1d1d1f', 650)
         box.addWidget(title)
         box.addWidget(self.label('Esta ventana te está distrayendo. Retomá lo que te propusiste.', 15, '#424242'))
-        self.countdown = self.label('', 48, '#c51b31', 650)
+        self.countdown = self.label('', 44, '#980e29', 650)
         self.countdown.setAccessibleName('Tiempo restante')
         box.addWidget(self.countdown)
 
@@ -97,20 +97,15 @@ class FocusAlert(QDialog):
         dismiss.setObjectName('dismiss')
         dismiss.clicked.connect(self.accept)
         box.addWidget(dismiss, alignment=Qt.AlignmentFlag.AlignHCenter)
-        disable = QPushButton('Detener avisos', self.card)
-        disable.setObjectName('disable')
-        disable.clicked.connect(stop)
-        box.addWidget(disable, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.card.setStyleSheet("""
             QLabel { background: transparent; }
-            QPushButton { color: #242424; border: none; padding: 7px 18px; border-radius: 13px;
-                          font: 600 14px 'Segoe UI'; }
-            QPushButton#dismiss { background-color: rgba(0, 0, 0, 18); min-width: 88px; }
-            QPushButton#disable { color: #505050; background: transparent; font-weight: 400; }
-            QPushButton#dismiss:hover, QPushButton#dismiss:focus,
-            QPushButton#disable:hover, QPushButton#disable:focus { background-color: rgba(0, 0, 0, 30); }
+            QPushButton { color: #242424; border: 1px solid transparent; padding: 9px 20px;
+                          border-radius: 15px; min-width: 88px; font: 600 14px 'Segoe UI';
+                          background-color: rgba(0, 0, 0, 18); }
+            QPushButton:hover { background-color: rgba(0, 0, 0, 30); }
+            QPushButton:focus { border-color: rgba(0, 0, 0, 48); }
         """)
-        self.refresh_timer = QTimer(self, interval=1000)
+        self.refresh_timer = QTimer(self, interval=1000, timerType=Qt.TimerType.PreciseTimer)
         self.refresh_timer.timeout.connect(self.refresh_countdown)
         self.finished.connect(self.refresh_timer.stop)
         self.refresh_countdown()
@@ -132,10 +127,11 @@ class FocusAlert(QDialog):
     def present(self):
         snapshot = capture_screen(self.screen_to_cover)
         density = self.screen_to_cover.devicePixelRatio()
-        self.backdrop = gaussian_backdrop(snapshot, max(4, round(5 * density)))
-        self.card_backdrop = gaussian_backdrop(snapshot, max(12, round(17 * density)))
+        self.backdrop = gaussian_backdrop(snapshot, max(1, round(8 * density)))
+        self.card_backdrop = gaussian_backdrop(snapshot, max(1, round(22 * density)))
         self.setScreen(self.screen_to_cover)
         self.setGeometry(self.screen_to_cover.geometry())
+        self.refresh_countdown()
         self.show()
         self.activateWindow()
         self.refresh_timer.start()
@@ -143,14 +139,18 @@ class FocusAlert(QDialog):
     def paintEvent(self, event):
         with QPainter(self) as painter:
             painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-            painter.fillRect(self.rect(), QColor('#dddddd'))
+            painter.fillRect(self.rect(), QColor('#aaaaaa'))
             if not self.backdrop.isNull():
                 painter.drawImage(self.rect(), self.backdrop)
-            painter.fillRect(self.rect(), QColor(248, 248, 248, 47))
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 74))
 
             card = QPainterPath()
             card.addRoundedRect(QRectF(self.card.geometry()), 32, 32)
+            painter.save()
             painter.setClipPath(card)
             if not self.card_backdrop.isNull():
                 painter.drawImage(self.rect(), self.card_backdrop)
-            painter.fillRect(self.card.geometry(), QColor(250, 250, 250, 204))
+            painter.fillRect(self.card.geometry(), QColor(250, 250, 250, 161))
+            painter.restore()
+            painter.setPen(QColor(255, 255, 255, 132))
+            painter.drawPath(card)

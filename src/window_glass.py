@@ -132,6 +132,9 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
     if not controls:
         return
     GL.glEnable(GL.GL_SCISSOR_TEST)
+    blend_was_enabled = GL.glIsEnabled(GL.GL_BLEND)
+    GL.glEnable(GL.GL_BLEND)
+    GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE_MINUS_SRC_ALPHA)
     text_surfaces = []
     try:
         for widget in owner.findChildren(QWidget):
@@ -160,18 +163,12 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 continue
             scissor(clip)
             draw(QRectF(area), 11, 3 if frost else 2)
-        if text_surfaces:
-            blend_was_enabled = GL.glIsEnabled(GL.GL_BLEND)
-            GL.glEnable(GL.GL_BLEND)
-            GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE_MINUS_SRC_ALPHA)
-            try:
-                for area, clip in text_surfaces:
-                    scissor(clip)
-                    draw(QRectF(area), 12, 5 if light_text_background else 4)
-            finally:
-                if not blend_was_enabled:
-                    GL.glDisable(GL.GL_BLEND)
+        for area, clip in text_surfaces:
+            scissor(clip)
+            draw(QRectF(area), 12, 5 if light_text_background else 4)
     finally:
+        if not blend_was_enabled:
+            GL.glDisable(GL.GL_BLEND)
         GL.glDisable(GL.GL_SCISSOR_TEST)
 
 

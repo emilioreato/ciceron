@@ -39,6 +39,7 @@
 ## Compilación e instalación
 
 - Verifica las tareas habituales desde el código, con el lanzador de desarrollo y datos de prueba. Empaqueta solo si el usuario pide explícitamente una revisión concreta. Hazlo en una copia aislada de esa revisión con artefactos propios. El trabajo en otras copias puede continuar si no puede alterar la revisión elegida.
+- Si la copia diaria tiene fuentes vivas y el usuario pide ver el cambio aplicado, comprueba que la instancia se relanzó después del guardado y que usa el repositorio. Si el relanzamiento queda pendiente o arranca el respaldo, indícalo y verifica la causa antes de dar el cambio por aplicado.
 - `scripts\Crear EXE.bat` genera el programa distribuible como carpeta (`internos\Ciceron\Ciceron.exe` más `internos\Ciceron\_internal`) y el puente auxiliar `internos\CiceronHost.exe`. El instalador usa ese paquete por directorio; no uses un `internos\Ciceron.exe` antiguo como fuente de instalación.
 - Antes de reemplazar el paquete, verifica que la compilación terminó correctamente y que no se está ejecutando el ejecutable que se va a sustituir. No elimines artefactos anteriores durante una compilación concurrente.
 - `Instalar.bat` usa por defecto la revisión Python y prepara un entorno local. Usa `-Empaquetado` para instalar el paquete autocontenido. Verifica que la revisión elegida coincide con `Aplicacion\_internal\src\` en modo Python. En modo empaquetado compara el SHA-256 del ejecutable instalado con el paquete y comprueba `Aplicacion\_internal\base_library.zip`.

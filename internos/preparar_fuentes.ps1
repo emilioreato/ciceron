@@ -101,6 +101,14 @@ function New-CiceronSourceBundle([string]$Repository, [string]$Output, [string]$
     Copy-SafeTree -From $src -To (Join-Path $runtime 'src') -SkipTransient
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ejecutar_fuentes.py') -Destination $runtime
     Copy-SafeTree -From $assets -To (Join-Path $runtime 'assets')
+    $birthday = Join-Path $Repository 'paquetes\happy-birthday'
+    if (Test-Path -LiteralPath $birthday -PathType Container) {
+        $panels = Join-Path $runtime 'paquetes\happy-birthday'
+        New-Item -ItemType Directory -Path $panels -Force | Out-Null
+        foreach ($file in @('qt_agenda.py','birthdays.py','startup.py','windows_tray.py','icono.ico')) {
+            Copy-Item -LiteralPath (Join-Path $birthday $file) -Destination $panels
+        }
+    }
     Copy-SafeTree -From $extension -To (Join-Path $Output '00 EXTENSION') -SkipTransient -AtRoot
     $requirements = Join-Path $runtime 'requirements-runtime.txt'
     Copy-Item -LiteralPath (Join-Path $Repository 'requirements-runtime.txt') -Destination $requirements

@@ -1,6 +1,6 @@
 # Crear aplicaciones para Cicerón
 
-Cicerón instala paquetes `.ciceron`, los muestra en **General** y puede añadirlos al dock. Cada aplicación se ejecuta en su propio proceso. Puede distribuir un ejecutable de Windows con su runtime o un script para Python 3.12.
+Cicerón instala paquetes `.ciceron`, los muestra en **General** y puede añadirlos al dock. Las aplicaciones de terceros se ejecutan en su propio proceso. Pueden distribuir un ejecutable de Windows con su runtime o un script para Python 3.12. Los paneles integrados se implementan en el código de Cicerón.
 
 ## Instrucciones para una IA que crea una app
 
@@ -91,6 +91,24 @@ Si distribuyes Python directamente, Cicerón usa el intérprete 3.12 que ejecuta
 El manifiesto controla la rueda sobre el icono de Cicerón. Tu ejecutable controla el ratón en su propia ventana. Por ejemplo, puedes declarar un ajuste booleano para «Mantener encima» y aplicarlo al crear la ventana. Puedes hacer lo mismo con el estilo de captura, atajos o modos de puntero. Los permisos de Windows para micrófono, captura y automatización se gestionan al ejecutar la app.
 
 ## Instalar, actualizar y desinstalar
+
+### Compartir eventos de día completo
+
+El almanaque combina los cumpleaños de la agenda con aportes de otras apps. Cada app puede publicar un archivo UTF-8 en `CICERON_CALENDAR_DIR`, con el ID de la app como nombre y extensión `.json`. Sustituye el archivo mediante una escritura atómica y conserva un ID estable por evento. Ejemplo de una entrega:
+
+```json
+{"schema":1,"events":[{"id":"entrega-24","date":"2026-12-04","title":"Entregar el proyecto"}]}
+```
+
+Las fechas son locales y de día completo en formato ISO `AAAA-MM-DD`. La app de origen sigue siendo responsable de editar y exportar sus datos. El almanaque lee el archivo y no lo modifica. Happy Birthday aporta sus aniversarios desde la agenda existente. Este contrato inicial cubre eventos fechados y permite añadir nuevos productores sin cambiar cómo se guardan los cumpleaños.
+
+### Diseñar un panel del dock
+
+- Usa widgets y layouts de Qt para los controles, `panel('title', …)` para el encabezado y los roles `primary` y `quiet` para los botones. Deja que `AttachedPanel` gestione la posición, el vidrio, los subpaneles y el cierre. Happy Birthday se integra mediante `birthday_host.py` y reutiliza los datos del paquete instalado.
+- Usa `open_subpanel` para pantallas secundarias. Mantén una acción principal clara y deja los ajustes secundarios en el menú de la app.
+- Cuando el panel dibuja el vidrio, evita añadir otra superficie de captura encima. El compositor PyOpenGL debe mezclar los controles redondeados sobre el vidrio base con alfa premultiplicado. Un píxel transparente de una esquina debe conservar el material de abajo.
+- Si la herramienta vive dentro del centro, usa su bandeja para los avisos y mantén la lógica de fondo independiente de la visibilidad del panel. Prueba V1, V2 y V3 sobre fondos claros y oscuros, y comprueba apertura, cierre y avisos con el panel oculto.
+- Para componer el formulario usa [Qt Widgets y los layouts de PySide6](https://doc.qt.io/qtforpython-6/overviews/qtwidgets-layout.html). Para comprobar la mezcla del vidrio, usa PyOpenGL y la referencia de [mezcla alfa de OpenGL](https://registry.khronos.org/OpenGL-Refpages/gl4/html/glBlendFunc.xhtml). En este repo, `tests/centro.py` y `tests/contraste_vidrio.py` sirven como base para probar la interacción y el render.
 
 Una miniapp Python con ventanas Qt puede usar el material compartido cuando el centro se ejecuta desde fuentes. Si `CICERON_UI_ROOT` está presente, añade esa ruta a `sys.path` y usa `MiniappDialog` de `miniapp_ui` como base de la ventana. El diálogo usa los ajustes de apariencia del centro indicados por `CICERON_UI_CONFIG`. Mantén una alternativa si el centro no proporciona ese módulo. `paquetes/happy-birthday/` contiene un ejemplo con ventana propia y datos portables.
 

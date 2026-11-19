@@ -8,7 +8,7 @@ if not exist "%CICERON_EXE%" (
     exit /b 1
 )
 
-start "" "%CICERON_EXE%" --abrir
+start "" "%CICERON_EXE%" --inicio-silencioso
 if errorlevel 1 (
     echo No se pudo abrir Ciceron.
     pause

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QScrollArea, QStacke
 
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
-from windows_glass import (client_bounds, energy_saver_active, foreground_window, forward_wheel,
+from windows_glass import (PanelMousePress, client_bounds, energy_saver_active, foreground_window, forward_wheel,
                            is_external_window, root_window, apply_capture_affinity, capture_mode, window_belongs_to)
 
 
@@ -102,6 +102,10 @@ class DockIcon(QToolButton):
 class DockHandle(QToolButton):
     ARROW_RIGHT_INSET = 6
 
+    def mouseMoveEvent(self, event):
+        self.parentWidget().probe_hover()
+        super().mouseMoveEvent(event)
+
     def contextMenuEvent(self, event):
         dock = self.parentWidget()
         menu = QMenu(self)
@@ -176,6 +180,11 @@ class DockOptics(QOpenGLWidget):
         self.handoff_timer = QTimer(self)
         self.handoff_timer.setSingleShot(True)
         self.handoff_timer.timeout.connect(self.update)
+
+    def reset_handoff(self):
+        self.handoff_timer.stop()
+        self.awaiting_open = False
+        self.handoff_started = None
 
     def initializeGL(self):
         try:
@@ -460,6 +469,11 @@ class AttachedPanel(QWidget):
                 placeholder-text-color: {muted};
             }}
             QWidget#dockPanel QPushButton {{ padding: 5px 10px; }}
+            QWidget#dockPanel QListWidget {{
+                background: {fill}; color: {ink}; border: none; border-radius: 9px; padding: 4px;
+            }}
+            QWidget#dockPanel QListWidget::item {{ padding: 5px 8px; }}
+            QWidget#dockPanel QListWidget::item:selected {{ background: {hover}; color: {ink}; }}
             QWidget#dockPanel QPushButton#quiet {{ background: transparent; color: {'white' if self.dark else '#202020'}; }}
             QWidget#dockPanel QPushButton:hover, QWidget#dockPanel QPushButton:checked {{
                 background: {hover}; border-color: transparent;
@@ -639,17 +653,19 @@ class AppWheelFilter(QAbstractNativeEventFilter):
 class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
-    EDGE_INSET = 4
+    EDGE_INSET = 2
+    HANDLE_WIDTH = 36
+    HANDLE_HEIGHT = 62
     PANEL_GAP = 6
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
-    HOVER_DELAY_MS = 85
-    HOVER_PROBE_MS = 75
-    HIDE_DELAY = 0.03
+    HOVER_DELAY_MS = 24
+    HOVER_PROBE_MS = 40
+    HIDE_DELAY = 0.075
     HANDLE_FADE_END = 0.90
 
-    def __init__(self, icon, open_settings):
+    def __init__(self, icon, open_settings, *, tray_geometry=None):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
                          Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -659,6 +675,9 @@ class EdgeDock(QWidget):
         self.layer = DockOptics(self)
         self.panel = None
         self.panel_window = None
+        self.panel_mouse_press = PanelMousePress()
+        self.panel_session = 0
+        self.tray_geometry = tray_geometry
         self.pending_panel = None
         self.pending_open_timer = QTimer(self)
         self.pending_open_timer.setSingleShot(True)
@@ -674,6 +693,7 @@ class EdgeDock(QWidget):
         self.edge_hover = DockEdgeHover(self)
         self.edge_hover.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.handle = DockHandle(self)
+        self.handle.setMouseTracking(True)
         self.handle.setAccessibleName('Desplegar Cicerón')
         self.handle.setToolTip('Cicerón')
         self.handle.clicked.connect(self.reveal)
@@ -697,6 +717,7 @@ class EdgeDock(QWidget):
         self.animation.timeout.connect(self.update_dock)
         self.hover_timer = QTimer(self)
         self.hover_timer.setSingleShot(True)
+        self.hover_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.hover_timer.timeout.connect(self.confirm_hover)
         self.hover_probe = QTimer(self)
         self.hover_probe.setInterval(self.HOVER_PROBE_MS)
@@ -747,7 +768,8 @@ class EdgeDock(QWidget):
         self.setGeometry(area.right() + 1 - self.WIDTH, area.center().y() - height // 2, self.WIDTH, height)
         self.layer.setGeometry(self.rect())
         self.layer.lower()
-        self.handle.setGeometry(self.WIDTH - 25, height // 2 - 19, 25, 38)
+        self.handle.setGeometry(self.WIDTH - self.HANDLE_WIDTH, (height - self.HANDLE_HEIGHT) // 2,
+                                self.HANDLE_WIDTH, self.HANDLE_HEIGHT)
         self.edge_hover.setGeometry(self.WIDTH - self.EDGE_INSET - 1, self.handle.y(),
                                     self.EDGE_INSET + 1, self.handle.height())
         self.layout_icons()
@@ -787,7 +809,7 @@ class EdgeDock(QWidget):
                 if self.animation.isActive():
                     self.capture_timer.start(33)
                 self.capture()
-        if self.backdrop is None or not full:
+        if not full and self.backdrop is not None:
             self.stop_capture()
         if self.panel is not None:
             self.panel.capture_enabled = self.panel.prepare_layer(self.backdrop is not None)
@@ -800,9 +822,7 @@ class EdgeDock(QWidget):
             self.backdrop = None
         self.last_frames = None
         self.using_glass = False
-        self.layer.handoff_timer.stop()
-        self.layer.awaiting_open = False
-        self.layer.handoff_started = None
+        self.layer.reset_handoff()
         self.layer.frame = None
         self.layer.frame_bounds = None
         self.layer.light = None
@@ -839,6 +859,7 @@ class EdgeDock(QWidget):
     def shutdown(self):
         capture = self.backdrop
         self.close()
+        self.panel_mouse_press.stop()
         if capture is not None:
             capture.thread.join(timeout=2)
         if self.panel_window is not None:
@@ -850,9 +871,7 @@ class EdgeDock(QWidget):
         self.hover_timer.stop()
         self.capture_timer.stop()
         self.glass_timer.stop()
-        self.layer.handoff_timer.stop()
-        self.layer.awaiting_open = False
-        self.layer.handoff_started = None
+        self.layer.reset_handoff()
         if self.backdrop is not None:
             self.glass_idle_timer.start(1200)
         self.cancel_pending_panel()
@@ -904,7 +923,8 @@ class EdgeDock(QWidget):
         self.glass_idle_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.glass_enabled and not capture_mode() and self.backdrop is None and not self.glass_timer.isActive():
-            self.glass_timer.start(0)
+            # Show the provisional glass before starting the desktop capture.
+            self.glass_timer.start(48)
         if not self.animation.isActive():
             self.animation.start(16)
         self.update_dock()
@@ -926,15 +946,14 @@ class EdgeDock(QWidget):
                 self.last_frames = self.backdrop.latest if self.backdrop is not None else None
                 self.layer.frame = None
                 self.layer.frame_bounds = None
-                self.layer.handoff_timer.stop()
-                self.layer.handoff_started = None
+                self.layer.reset_handoff()
                 self.layer.awaiting_open = True
             self.transition_start = now
             self.transition_from = previous
             self.transition_to = target
         if self.motion_enabled and previous != target:
             distance = abs(target - self.transition_from)
-            duration = (.22 if target else .32) * max(.45, distance)
+            duration = (.18 if target else .32) * max(.45, distance)
             t = min(1.0, (now - self.transition_start) / duration)
             self.progress = self.transition_from + (target - self.transition_from) * t * t * (3 - 2 * t)
         else:
@@ -945,9 +964,7 @@ class EdgeDock(QWidget):
                 self.layer.update()
         if self.progress == 0.0 and not target:
             self.animation.stop()
-            self.layer.handoff_timer.stop()
-            self.layer.awaiting_open = False
-            self.layer.handoff_started = None
+            self.layer.reset_handoff()
             if not self.hover_probe.isActive():
                 self.hover_probe.start()
             self.capture_timer.stop()
@@ -1119,20 +1136,31 @@ class EdgeDock(QWidget):
 
     def nativeEvent(self, event_type, message):
         msg = wintypes.MSG.from_address(int(message))
+        if msg.message == PanelMousePress.MESSAGE:
+            session, target = msg.lParam, msg.wParam
+            QTimer.singleShot(0, self, lambda: self.dismiss_outside_click(session, target))
+            return True, 0
         if msg.message == 0x0218 and msg.wParam in (0x000A, 0x0012):
             QTimer.singleShot(0, self.prepare_layer)
         return super().nativeEvent(event_type, message)
 
     def application_state_changed(self, state):
         if state != Qt.ApplicationState.ApplicationActive and self.panel is not None:
-            QTimer.singleShot(0, self, self.dismiss_inactive_panel)
+            session = self.panel_session
+            QTimer.singleShot(0, self, lambda: self.dismiss_inactive_panel(session))
 
-    def dismiss_inactive_panel(self):
+    def dismiss_inactive_panel(self, session):
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            self.dismiss_outside_click(session, foreground_window())
+
+    def dismiss_outside_click(self, session, target):
         panel = self.panel
-        if panel is None or capture_mode() or QApplication.applicationState() == Qt.ApplicationState.ApplicationActive:
+        if panel is None or session != self.panel_session or capture_mode():
             return
-        target = foreground_window()
         if window_belongs_to(target, int(self.winId())) or self.is_panel_window(panel, target):
+            return
+        # The tray icon handles its own click to toggle the center.
+        if self.tray_geometry is not None and self.tray_geometry().contains(QCursor.pos()):
             return
         # A confirmation owned by this panel may be running a nested event loop.
         modal = QApplication.activeModalWidget()
@@ -1141,7 +1169,7 @@ class EdgeDock(QWidget):
                 return
             modal = modal.parentWidget()
         panel.close()
-        self.leave_at = 0.0
+        self.reset_to_handle()
 
     @staticmethod
     def is_panel_window(panel, handle):
@@ -1198,6 +1226,9 @@ class EdgeDock(QWidget):
         self.panel.layer.lower()
         self.panel.show_panel()
         self.panel.capture_enabled = self.panel.prepare_layer(live)
+        self.panel_session += 1
+        if QApplication.platformName() == 'windows':
+            self.panel_mouse_press.start(int(self.winId()), self.panel_session)
         self.capture()
         self.reveal()
 
@@ -1227,4 +1258,5 @@ class EdgeDock(QWidget):
     def panel_closed(self, panel):
         if self.panel is panel:
             self.panel = None
+            self.panel_mouse_press.stop()
             self.leave_at = time.monotonic() + self.HIDE_DELAY
