@@ -254,25 +254,12 @@ def main():
 
         center.window.setFixedSize(520, 650)
         capture_main(center, app, 'v2', 'general-v2.png')
-        capture_main(center, app, 'v3', 'general-v3.png')
-        capture_main(center, app, 'v4', 'general-v4.png')
-        capture_main(center, app, 'v2', 'settings-v2.png', page='settings', size=(520, 700))
 
         center.cfg.update(title='Sesión de enfoque', target='2026-12-01T09:00:00',
                           guardian=True, ui_version='v2')
         center.apply_appearance()
         timer = center.goal_dialog(attached=True)
         capture_dialog(timer, app, 'timer-v2.png', width=410, light=True)
-
-        center.cfg['ui_version'] = 'v3'
-        center.apply_appearance()
-        app._ciceron_overlay = SimpleNamespace(isVisible=lambda: True)
-        app._ciceron_particles = []
-        effects = module.VisualDialog(center.window, attached=True, dock_provider=lambda: None)
-        capture_dialog(effects, app, 'effects-v3.png', width=380)
-
-        browser = module.BrowserDialog(center.window, attached=True)
-        capture_dialog(browser, app, 'web-block-v3.png', width=430)
 
         capture_calendar(app, OUTPUT / 'annual-calendar.png')
 
