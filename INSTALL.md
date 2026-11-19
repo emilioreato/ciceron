@@ -19,19 +19,8 @@ La primera instalación prepara las dependencias de `requirements-runtime.txt` e
 - **`Aplicacion\datos\` es la carpeta de datos.** Incluye preferencias, biblioteca, miniapps instaladas y sus datos. La actualización, la recuperación y el desinstalador la conservan. El desinstalador retira el lanzador activo y sus integraciones y conserva también los archivos que permiten recuperar la instalación.
 - Abre Cicerón una vez desde la ruta nueva antes del próximo inicio de sesión. En modo Python, el lanzador detecta el traslado, repara la integración y abre el centro. Hasta entonces Windows usa la ruta anterior. La reparación conserva tu preferencia de inicio automático. Para la copia empaquetada, ejecuta `Reparar integracion.bat`. Si Chromium sigue apuntando a la ruta anterior, vuelve a cargar la extensión desempaquetada.
 - Si falta parte del entorno o Python falla al arrancar, el lanzador ofrece repararlo. También puedes ejecutar `Reparar integracion.bat`.
-- El historial local de compilaciones y pruebas se guarda comprimido en la carpeta `archivo` del proyecto.
 - Si una actualización falla, conserva el mensaje y vuelve a abrir la versión anterior. Si la actualización terminó pero encuentras un problema después, usa **Recuperar versión anterior**. Si cambió el formato de datos, hay una copia previa en `Aplicacion\datos-antes-de-actualizar-…\`. La recuperación activa el código anterior con los datos actuales. Consulta los pasos para recuperar datos por separado antes de abrir una revisión que necesite el formato antiguo. [Recuperación y formatos](DESARROLLO.md#recuperar-una-versión)
 
-## Cambiar código y añadir miniapps
+## Desarrollo y miniapps
 
-Para vincular la copia diaria al repo, ejecuta una vez `Instalar.bat -FuentesVivas` con `Aplicacion\` dentro del repositorio. Los cambios guardados en los módulos Python de `src\` reinician el centro automáticamente. Si hay un diálogo modal abierto, espera a que lo cierres. El perfil diario y sus datos permanecen en `Aplicacion\datos\`. Si una edición tiene un error de sintaxis, el proceso actual sigue abierto. Si falla el arranque desde el repo, se utiliza la copia estable instalada y se guarda el error en `datos\recarga-error.log`.
-
-El instalador conserva el vínculo si vuelves a ejecutarlo desde el repo. Los cambios al instalador, las dependencias y la extensión del navegador mantienen sus propios pasos de actualización. Si mueves solo `Aplicacion\`, se usa su copia local. **Recuperar versión anterior** activa una revisión fija. También puedes instalar una revisión fija con `Instalar.bat -RevisionFija`.
-
-Para probar con otro perfil, usa `scripts\Ejecutar en desarrollo.bat`. Lee los archivos actuales del repositorio y usa `.desarrollo\datos\`. Si ya está abierto, sal de **Cicerón · desarrollo** desde la bandeja y vuelve a lanzarlo.
-
-Una miniapp puede entregarse como `.ciceron` con un `.exe` o un punto de entrada Python 3.12. Mantén su ID entre versiones y guarda los datos persistentes declarados dentro de `CICERON_APP_DATA`. En el centro, importa el paquete desde **General**. Para trasladar los datos de una o varias apps, usa **Datos → Exportar / Importar**. En el destino, instala primero las apps compatibles. Si ya hay datos, la importación omite esa app por defecto y ofrece respaldo previo si eliges reemplazarla. [Formato, ejemplo y comandos para crear un paquete](docs/paquetes-ciceron.md)
-
-## Comprobación para agentes
-
-Lee [AGENTS.md](AGENTS.md) antes de cambiar el repo. Prueba primero el recorrido afectado en el perfil de desarrollo. Para cambios al instalador o al ciclo de arranque, usa `tests\fuentes.ps1` con el entorno de desarrollo preparado. Prueba las migraciones con datos temporales. Actualiza la copia diaria solo cuando el usuario pida instalar esa revisión.
+Para ejecutar con un perfil de prueba, vincular la instalación diaria a fuentes vivas, verificar cambios o preparar una distribución, consulta [Desarrollo de Cicerón](DESARROLLO.md). El formato `.ciceron`, su ejemplo y el traslado selectivo de datos están en [Aplicaciones y datos](docs/paquetes-ciceron.md). Importar datos no instala ni ejecuta código.

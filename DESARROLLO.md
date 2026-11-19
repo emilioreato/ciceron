@@ -10,6 +10,12 @@ La aplicación usa PySide6 y Qt desde `src/ciceron.pyw`. El instalador guarda un
 
 Para actualizar dependencias ejecuta `scripts\preparar.bat`. Si el entorno se movió o corresponde a otra versión de Python, el script aparta la carpeta existente y crea un entorno nuevo en la ruta actual.
 
+## Vincular la instalación diaria a fuentes vivas
+
+Con `Aplicacion\` dentro del repositorio, ejecuta `Instalar.bat -FuentesVivas`. La copia diaria usará los módulos de `src\` y conservará su perfil en `Aplicacion\datos\`. Al guardar cambios en esos módulos, Cicerón se reinicia cuando no queda un diálogo modal abierto. Si una edición tiene un error de sintaxis, la instancia actual sigue funcionando; si falla el arranque desde el repositorio, el lanzador abre la copia estable y guarda el motivo en `datos\recarga-error.log`.
+
+El instalador conserva el vínculo al volver a ejecutarlo desde el repositorio. Los cambios al instalador, a las dependencias o a la extensión requieren sus propios pasos. Si mueves `Aplicacion\` fuera del repositorio, pasa a usar su copia local. Para fijar una revisión, ejecuta `Instalar.bat -RevisionFija`; **Recuperar versión anterior** también activa código fijo.
+
 ## Crear e instalar el ejecutable
 
 Las verificaciones normales se hacen desde el código. Si el usuario pide un paquete autocontenido de una revisión concreta, prepara una copia aislada y ejecuta allí `scripts\Crear EXE.bat`. Los resultados son `internos\Ciceron\Ciceron.exe`, `internos\Ciceron\_internal\` y `internos\CiceronHost.exe`. Cuando se autorice instalar ese paquete, ejecuta `Instalar.bat -Empaquetado`.
@@ -38,7 +44,6 @@ Si una versión antigua necesita el formato anterior, cierra el centro y las min
 - `tests/` y `navegador/tests/`: pruebas de escritorio, instalador y extensión.
 - `paquetes/ejemplo/`: ejemplo del formato de aplicaciones de Cicerón.
 - `docs/`: documentación técnica vigente.
-- `archivo/`: material histórico local excluido de la publicación.
 - `.venv/`, `.compilacion/`, `.salida/`: archivos locales de desarrollo generados al ejecutar los scripts; no se versionan.
 
 Las rutas internas se forman respecto de `Aplicacion\`. El menú Inicio, Run y Native Messaging requieren rutas absolutas administradas por Windows. **Reparar integración** las recrea para la ubicación actual. El instalador y el arranque después de reiniciar deben comprobarse en el equipo de destino.
