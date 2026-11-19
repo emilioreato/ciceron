@@ -6,6 +6,12 @@ using System.Windows.Forms;
 
 internal static class CiceronLauncher
 {
+    private sealed class RepairRequired : Exception
+    {
+        public readonly bool Moved;
+        public RepairRequired(string message, bool moved = false) : base(message) { Moved = moved; }
+    }
+
     private static string Quote(string value)
     {
         // Windows argv quoting, including runs of backslashes before a quote.
@@ -63,15 +69,19 @@ internal static class CiceronLauncher
         if (!System.Text.RegularExpressions.Regex.IsMatch(key, @"\A[a-f0-9]{64}\z"))
             throw new InvalidDataException("La referencia al entorno de Python es inválida.");
         string environment = Path.Combine(root, ".entornos", key);
-        string location = File.ReadAllText(Path.Combine(environment, "ubicacion.txt")).Trim();
+        string marker = Path.Combine(environment, "ubicacion.txt");
+        string interpreter = Path.Combine(environment, "Scripts", host ? "python.exe" : "pythonw.exe");
+        if (!File.Exists(marker) || !File.Exists(interpreter))
+            throw new RepairRequired("Falta parte del entorno de Python de Cicerón.");
+        string location = File.ReadAllText(marker).Trim();
         if (!String.Equals(environment, location, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("La carpeta de Cicerón se movió. Ejecuta Reparar integracion.bat.");
+            throw new RepairRequired("La carpeta de Cicerón se movió.", true);
         string entry = Path.Combine(code, "src", host ? "browser_bridge.py" : "ciceron.pyw");
         string bootstrap = Path.Combine(code, "ejecutar_fuentes.py");
         if (!host && File.Exists(bootstrap)) entry = bootstrap;
         return new ProcessStartInfo
         {
-            FileName = Path.Combine(environment, "Scripts", host ? "python.exe" : "pythonw.exe"),
+            FileName = interpreter,
             WorkingDirectory = root,
             Arguments = "-E -s -B " + Quote(entry)
                 + (args.Length == 0 ? "" : " " + String.Join(" ", Array.ConvertAll(args, Quote))),
@@ -82,6 +92,47 @@ internal static class CiceronLauncher
         };
     }
 
+    private static bool Repair(string root)
+    {
+        string script = Path.Combine(root, "integracion", "instalar.ps1");
+        if (!File.Exists(script)) return false;
+        string shell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        var info = new ProcessStartInfo(shell, "-NoProfile -ExecutionPolicy Bypass -File "
+            + Quote(script) + " -InstallDir " + Quote(root) + " -Reparar") { WorkingDirectory = root };
+        using (var process = Process.Start(info))
+        {
+            process.WaitForExit();
+            return process.ExitCode == 0;
+        }
+    }
+
+    private static int OpenCenter(string root, string[] args)
+    {
+        string session = Path.Combine(root, "centro-fuentes.lock");
+        bool reload = Array.IndexOf(args, "--ciceron-recarga") >= 0;
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using (var process = Start(() => Configure(root, false, args), session, reload))
+                {
+                    if (process != null && process.HasExited && process.ExitCode != 0)
+                        throw new RepairRequired("Python no pudo iniciar Cicerón.");
+                    return 0;
+                }
+            }
+            catch (RepairRequired error)
+            {
+                if (attempt != 0 || reload) throw;
+                if (!error.Moved && MessageBox.Show(error.Message + "\n\n¿Quieres intentar reparar el entorno?",
+                    "Cicerón", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return 1;
+                if (!Repair(root))
+                    throw new InvalidOperationException("No se completó la reparación. Abre Reparar integracion.bat para ver el detalle.");
+            }
+        }
+    }
+
     private static int Main(string[] args)
     {
         string exe = Assembly.GetExecutingAssembly().Location;
@@ -89,17 +140,9 @@ internal static class CiceronLauncher
         bool host = Path.GetFileName(exe).StartsWith("CiceronHost", StringComparison.OrdinalIgnoreCase);
         try
         {
-            string session = host ? null : Path.Combine(root, "centro-fuentes.lock");
-            bool reload = !host && Array.IndexOf(args, "--ciceron-recarga") >= 0;
-            using (var process = Start(() => Configure(root, host, args), session, reload))
+            if (!host) return OpenCenter(root, args);
+            using (var process = Start(() => Configure(root, true, args), null, false))
             {
-                if (process == null) return 0;
-                if (!host)
-                {
-                    if (process.HasExited && process.ExitCode != 0)
-                        throw new InvalidOperationException("Python no pudo iniciar Cicerón. Ejecuta Instalar.bat para revisar el entorno.");
-                    return 0;
-                }
                 var input = new System.Threading.Thread(() =>
                 {
                     using (var pipe = process.StandardInput.BaseStream)

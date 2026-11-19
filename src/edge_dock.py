@@ -171,6 +171,7 @@ class DockOptics(QOpenGLWidget):
         self.error = None
         self.light = None
         self.tone_checked = 0.0
+        self.awaiting_open = False
         self.handoff_started = None
         self.handoff_timer = QTimer(self)
         self.handoff_timer.setSingleShot(True)
@@ -231,7 +232,10 @@ class DockOptics(QOpenGLWidget):
         glass_mix = 1.0
         provisional = (0.0, 0.0, 0.0, 0.0)
         if owner is dock:
-            if self.frame is None:
+            if self.awaiting_open and dock.progress == 1.0 and self.frame is not None:
+                self.awaiting_open = False
+                self.handoff_started = time.monotonic()
+            if self.frame is None or self.awaiting_open:
                 glass_mix = 0.0
             elif self.handoff_started is not None:
                 t = min(1.0, (time.monotonic() - self.handoff_started) / .15)
@@ -641,6 +645,7 @@ class EdgeDock(QWidget):
     STEP = 38
     DIAMETER = 34
     HOVER_DELAY_MS = 85
+    HOVER_PROBE_MS = 75
     HIDE_DELAY = 0.03
     HANDLE_FADE_END = 0.90
 
@@ -693,6 +698,10 @@ class EdgeDock(QWidget):
         self.hover_timer = QTimer(self)
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self.confirm_hover)
+        self.hover_probe = QTimer(self)
+        self.hover_probe.setInterval(self.HOVER_PROBE_MS)
+        self.hover_probe.timeout.connect(self.probe_hover)
+        self.hover_blocked = False
         self.capture_timer = QTimer(self)
         self.capture_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.capture_timer.timeout.connect(self.capture)
@@ -767,7 +776,7 @@ class EdgeDock(QWidget):
     def prepare_layer(self):
         if capture_mode() or not self.isVisible():
             return
-        if self.progress == 0 and self.panel is None and self.pending_panel is None:
+        if self.progress == 0 and self.transition_to == 0 and self.panel is None and self.pending_panel is None:
             return
         full = self.glass_enabled and not energy_saver_active()
         if full and self.backdrop is None:
@@ -792,6 +801,7 @@ class EdgeDock(QWidget):
         self.last_frames = None
         self.using_glass = False
         self.layer.handoff_timer.stop()
+        self.layer.awaiting_open = False
         self.layer.handoff_started = None
         self.layer.frame = None
         self.layer.frame_bounds = None
@@ -814,9 +824,12 @@ class EdgeDock(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         apply_capture_affinity(self)
+        if self.progress == 0:
+            self.hover_probe.start()
 
     def hideEvent(self, event):
         self.glass_timer.stop()
+        self.hover_probe.stop()
         if self.panel is not None:
             self.panel.close()
         self.stop_capture()
@@ -837,32 +850,45 @@ class EdgeDock(QWidget):
         self.hover_timer.stop()
         self.capture_timer.stop()
         self.glass_timer.stop()
+        self.layer.handoff_timer.stop()
+        self.layer.awaiting_open = False
+        self.layer.handoff_started = None
         if self.backdrop is not None:
             self.glass_idle_timer.start(1200)
         self.cancel_pending_panel()
         self.leave_at = self.transition_to = self.progress = 0.0
+        self.hover_blocked = self.pointer_over_dock()
+        if self.isVisible():
+            self.hover_probe.start()
         self.layout_icons()
         self.layer.update()
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        # Native enter notifications can repeat while the animated mask changes.
-        if self.progress == 0 and self.transition_to == 0 and not self.hover_timer.isActive():
-            if self.pointer_over_dock():
-                self.hover_timer.start(self.HOVER_DELAY_MS)
+        self.probe_hover()
+
+    def probe_hover(self):
+        if not self.isVisible() or self.progress != 0 or self.transition_to != 0:
+            return
+        if not self.pointer_over_dock():
+            self.hover_blocked = False
+            self.hover_timer.stop()
+        elif not self.hover_blocked and not self.hover_timer.isActive():
+            self.hover_timer.start(self.HOVER_DELAY_MS)
 
     def pointer_over_dock(self):
         point = self.mapFromGlobal(QCursor.pos())
         return self.handle.geometry().contains(point) or (self.progress > 0 and self.mask().contains(point))
 
     def confirm_hover(self):
-        if self.isVisible() and self.pointer_over_dock():
+        if self.isVisible() and not self.hover_blocked and self.pointer_over_dock():
             self.reveal()
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
         if self.pointer_over_dock():
             return
+        self.hover_blocked = False
         self.hover_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.animation.isActive():
@@ -873,16 +899,18 @@ class EdgeDock(QWidget):
 
     def reveal(self):
         self.hover_timer.stop()
+        self.hover_probe.stop()
+        self.hover_blocked = False
         self.glass_idle_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
         if self.glass_enabled and not capture_mode() and self.backdrop is None and not self.glass_timer.isActive():
-            self.glass_timer.start(180)
+            self.glass_timer.start(0)
         if not self.animation.isActive():
             self.animation.start(16)
-        if self.backdrop is not None and not self.capture_timer.isActive():
+        self.update_dock()
+        if self.backdrop is not None and self.transition_to and not self.capture_timer.isActive():
             self.capture_timer.start(33)
             self.capture()
-        self.update_dock()
 
     def update_dock(self):
         now = time.monotonic()
@@ -893,6 +921,14 @@ class EdgeDock(QWidget):
         target = float(self.panel is not None or self.pending_panel is not None or now < self.leave_at or keep_open)
         previous = self.progress
         if self.transition_to != target:
+            if target and previous == 0 and self.glass_enabled and self.motion_enabled and not capture_mode():
+                # A previously open dock must not show a different first frame after a quick revisit.
+                self.last_frames = self.backdrop.latest if self.backdrop is not None else None
+                self.layer.frame = None
+                self.layer.frame_bounds = None
+                self.layer.handoff_timer.stop()
+                self.layer.handoff_started = None
+                self.layer.awaiting_open = True
             self.transition_start = now
             self.transition_from = previous
             self.transition_to = target
@@ -909,6 +945,11 @@ class EdgeDock(QWidget):
                 self.layer.update()
         if self.progress == 0.0 and not target:
             self.animation.stop()
+            self.layer.handoff_timer.stop()
+            self.layer.awaiting_open = False
+            self.layer.handoff_started = None
+            if not self.hover_probe.isActive():
+                self.hover_probe.start()
             self.capture_timer.stop()
             self.glass_timer.stop()
             if self.backdrop is not None:
@@ -1021,7 +1062,7 @@ class EdgeDock(QWidget):
                     owner.layer.set_frame(frame, captured)
                     if not owner.using_glass:
                         owner.using_glass = True
-                        if owner is self and self.motion_enabled:
+                        if owner is self and self.motion_enabled and not self.layer.awaiting_open:
                             self.layer.handoff_started = time.monotonic()
                         if owner is panel and self.pure:
                             panel.apply_glass_tone(panel.layer.light)

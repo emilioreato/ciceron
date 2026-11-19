@@ -23,7 +23,7 @@ function Install([string[]]$Flags) {
 function Start-TestCenter {
     $launcher = Join-Path $profile 'Ciceron.exe'
     $process = Start-Process -FilePath $launcher -ArgumentList '--inicio-silencioso' -WindowStyle Hidden -PassThru
-    if (!$process.WaitForExit(8000) -or $process.ExitCode -ne 0) { throw 'Fallo el lanzador diario.' }
+    if (!$process.WaitForExit(30000) -or $process.ExitCode -ne 0) { throw 'Fallo el lanzador diario.' }
     for ($attempt = 0; $attempt -lt 80; $attempt++) {
         if (Test-CiceronSourceRunning $profile) { return }
         Start-Sleep -Milliseconds 100
@@ -108,7 +108,18 @@ try {
     [IO.Directory]::Move($profile, $moved)
     $profile = $moved
     $installer = Join-Path $profile 'integracion\instalar.ps1'
-    Install @('-Reparar')
+    # The launcher uses the real repair entry point. Redirect only this fixture's registry writes.
+    $isolatedInstaller = Join-Path $profile 'integracion\instalar-aislado.ps1'
+    Move-Item -LiteralPath $installer -Destination $isolatedInstaller
+    $env:CICERON_TEST_RUN = $run
+    $env:CICERON_TEST_NATIVE = $native
+    [IO.File]::WriteAllText($installer, @'
+param([string]$InstallDir, [switch]$Reparar)
+if (!$env:CICERON_TEST_RUN.StartsWith('HKCU:\Software\CiceronPruebaFuentes-')) { exit 2 }
+& (Join-Path $PSScriptRoot 'instalar-aislado.ps1') -InstallDir $InstallDir -Reparar -RunKey $env:CICERON_TEST_RUN -NativeRoot $env:CICERON_TEST_NATIVE
+exit $LASTEXITCODE
+'@)
+    Start-TestCenter
     $launcher = Join-Path $profile 'Ciceron.exe'
     if ((Get-ItemProperty -LiteralPath $run).Ciceron -notlike ('"*' + $launcher + '" *')) { throw 'Inicio apunta a la ubicacion anterior.' }
     $manifest = Get-Content -LiteralPath (Join-Path $profile 'ciceron-native-host.json') -Raw | ConvertFrom-Json

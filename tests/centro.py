@@ -430,12 +430,16 @@ with TemporaryDirectory() as temporary:
         dock.leaveEvent(QEvent(QEvent.Type.Leave))
         assert not dock.hover_timer.isActive() and not dock.animation.isActive()
         cursor.pos.return_value = dock.mapToGlobal(edge)
-        dock.enterEvent(enter)
+        # The cursor can be on the handle without Qt delivering a fresh Enter event.
+        dock.hover_probe.timeout.emit()
+        assert dock.hover_timer.isActive()
         dock.hover_timer.timeout.emit()
         assert not dock.hover_timer.isActive() and dock.transition_to == 1.0
         dock.leaveEvent(QEvent(QEvent.Type.Leave))
         assert dock.transition_to == 1.0
         dock.reset_to_handle()
+        dock.hover_probe.timeout.emit()
+        assert not dock.hover_timer.isActive()
         dock.reveal()
         assert dock.transition_to == 1.0
         dock.reset_to_handle()
@@ -462,7 +466,10 @@ with TemporaryDirectory() as temporary:
     with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'capture') as capture:
         cursor.pos.return_value = dock.geometry().topLeft() - module.QPoint(100, 100)
         dock.backdrop = source = Mock(lens=None)
+        dock.layer.frame = Mock()
         dock.reveal()
+        assert dock.layer.frame is None and dock.layer.awaiting_open
+        assert dock.last_frames is source.latest
         assert dock.capture_timer.isActive()
         capture.assert_called_once()
         dock.leave_at = 0.0
@@ -536,7 +543,8 @@ with TemporaryDirectory() as temporary:
     assert not dock.isVisible()
     assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
     assert not any(timer.isActive() for timer in
-                   (dock.animation, dock.hover_timer, dock.pending_open_timer, dock.capture_timer, dock.glass_timer))
+                   (dock.animation, dock.hover_timer, dock.hover_probe, dock.pending_open_timer,
+                    dock.capture_timer, dock.glass_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
     center.toggle_edge_dock_visibility()

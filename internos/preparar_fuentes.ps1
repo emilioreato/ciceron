@@ -15,17 +15,46 @@ function Initialize-CiceronEnvironment([string]$Root, [string]$Runtime, [string]
     $environment = Join-Path $parent $key
     $python = Join-Path $environment 'Scripts\python.exe'
     $marker = Join-Path $environment 'ubicacion.txt'
-    $verify = 'import importlib.metadata as m, pathlib, sys; sys.exit(not (sys.version_info[:2] == (3,12) and all(m.version(n) == v for n,v in (s.strip().split(chr(61)*2) for s in pathlib.Path(sys.argv[1]).read_text().splitlines() if s.strip()))))'
+    $verify = @'
+import importlib.metadata as metadata
+import importlib.util
+from pathlib import Path
+import sys
+
+import OpenGL
+import PySide6.QtWidgets
+
+assert sys.version_info[:2] == (3, 12)
+assert importlib.util.find_spec('dxcam') is not None
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if line.strip():
+        name, version = line.strip().split('==')
+        assert metadata.version(name) == version
+'@
     if ((Test-Path -LiteralPath $marker -PathType Leaf) -and
         ([string](Get-Content -LiteralPath $marker -Raw -Encoding UTF8)).Trim() -eq $environment -and
-        (Test-Path -LiteralPath $python -PathType Leaf)) {
+        (Test-Path -LiteralPath $python -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $environment 'Scripts\pythonw.exe') -PathType Leaf)) {
         & $python -B -c $verify $requirements
         if ($LASTEXITCODE -eq 0) { return }
     }
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
-    if (!$py) { throw 'Se necesita Python 3.12 para Windows y su lanzador py.' }
-    & $py.Source -3.12 -c 'import sys; sys.exit(sys.version_info[:2] != (3,12))'
-    if ($LASTEXITCODE -ne 0) { throw 'No se encontró Python 3.12. Comprueba py -3.12 --version.' }
+    $available = $false
+    if ($py) {
+        & $py.Source -3.12 --version 2>$null
+        $available = $LASTEXITCODE -eq 0
+    }
+    if (!$available) {
+        $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if (!$winget) { throw 'Se necesita Python 3.12 para Windows con el lanzador py. Instálalo y vuelve a intentarlo.' }
+        if ((Read-Host 'Falta Python 3.12. ¿Instalarlo con WinGet? Escribe SI para continuar') -ine 'SI') {
+            throw 'Se canceló la instalación de Python 3.12.'
+        }
+        & $winget.Source install --id Python.Python.3.12 --exact --source winget
+        if ($LASTEXITCODE -ne 0) { throw 'WinGet no pudo instalar Python 3.12.' }
+        $py = Get-Command py.exe -ErrorAction SilentlyContinue
+        if (!$py) { throw 'Python se instaló. Vuelve a abrir el lanzador para cargar la configuración nueva.' }
+    }
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
     if (Test-Path -LiteralPath $environment) {
         $item = Get-Item -LiteralPath $environment -Force
@@ -59,8 +88,6 @@ function Initialize-CiceronEnvironment([string]$Root, [string]$Runtime, [string]
     }
     & $python -B -c $verify $requirements
     if ($LASTEXITCODE -ne 0) { throw 'El entorno no tiene las versiones requeridas por Cicerón.' }
-    & $python -B -c 'import PySide6.QtWidgets; import OpenGL'
-    if ($LASTEXITCODE -ne 0) { throw 'Falló la comprobación del entorno de Cicerón.' }
     [IO.File]::WriteAllText($marker, $environment)
 }
 

@@ -196,6 +196,19 @@ assert int(dock.winId()) == hwnd
 dock.layer.handoff_timer.stop()
 dock.layer.handoff_started = None
 
+dock.progress = .60
+dock.layer.awaiting_open = True
+dock.layer.frame = None
+cold_opening = center_pixel()
+assert dock_pixel('#ffffff', True) == cold_opening
+assert dock.layer.awaiting_open and dock.layer.handoff_started is None
+dock.progress = 1.0
+with patch('edge_dock.time.monotonic', return_value=20.0):
+    center_pixel()
+assert not dock.layer.awaiting_open and dock.layer.handoff_started == 20.0
+dock.layer.handoff_timer.stop()
+dock.layer.handoff_started = None
+
 dock.using_glass = True
 coverage = []
 for light, ink in ((False, '#ffffff'), (True, '#343434')):
