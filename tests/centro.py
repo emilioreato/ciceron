@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
-from PySide6.QtCore import QEvent, QPoint, QPointF
+from PySide6.QtCore import QEvent, QPoint, QPointF, QSize
 from PySide6.QtGui import QEnterEvent, QKeyEvent, QWheelEvent
 from PySide6.QtTest import QTest
 
@@ -42,6 +42,7 @@ with TemporaryDirectory() as temporary:
     app.setQuitOnLastWindowClosed(False)
     with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=True):
         center = module.App()
+    assert center.library_summary.text() == ''
     kernel = module.ctypes.windll.kernel32
     kernel.CreateEventW.argtypes = [module.ctypes.c_void_p, module.ctypes.c_int, module.ctypes.c_int, module.ctypes.c_wchar_p]
     kernel.CreateEventW.restype = module.ctypes.c_void_p
@@ -153,6 +154,7 @@ with TemporaryDirectory() as temporary:
             patch('edge_dock.foreground_window', side_effect=[200, 100]), \
             patch('edge_dock.is_external_window', side_effect=lambda handle: handle == 200), \
             patch('edge_dock.window_belongs_to', return_value=False), \
+            patch('edge_dock.QApplication.widgetAt', return_value=center.window), \
             patch('edge_dock.forward_wheel', return_value=True) as forward:
         msg.message = 0x0021  # click while the other app still owns focus
         assert wheel_filter.nativeEventFilter(b'windows_generic_MSG', addressof(msg)) == (False, 0)
@@ -178,6 +180,11 @@ with TemporaryDirectory() as temporary:
     page = center.pages.currentWidget()
     bar = page.verticalScrollBar()
     assert bar.maximum() > 0
+    msg.message = 0x020A  # Wheel over a page with internal scroll stays in Cicerón.
+    with patch('edge_dock.QApplication.widgetAt', return_value=page.viewport()), \
+            patch('edge_dock.forward_wheel') as forward:
+        assert wheel_filter.nativeEventFilter(b'windows_generic_MSG', addressof(msg)) == (False, 0)
+        forward.assert_not_called()
     wheel = QWheelEvent(QPointF(10, 10), QPointF(), QPoint(), QPoint(0, -120),
                         module.Qt.MouseButton.NoButton, module.Qt.KeyboardModifier.NoModifier,
                         module.Qt.ScrollPhase.NoScrollPhase, False)
@@ -260,6 +267,12 @@ with TemporaryDirectory() as temporary:
     assert center.library_rows.count() == 1
     row = center.library_rows.itemAt(0).widget()
     assert row.objectName() == 'appCard'
+    for card in (row, *(frame for frame, _ in center.builtin_cards)):
+        identity = card.findChild(module.AppCardIdentity)
+        assert identity is not None and not identity.badge.pixmap().isNull()
+        assert {label.objectName() for label in identity.findChildren(module.QLabel)} == {
+            'appCardIcon', 'heading', 'muted',
+        }
     more = next(btn for btn in row.findChildren(module.QPushButton) if btn.menu() is not None)
     with patch.object(module.QInputDialog, 'getText', return_value=('Notas rápidas', True)):
         more.menu().actions()[0].trigger()
@@ -324,6 +337,17 @@ with TemporaryDirectory() as temporary:
     assert [entry.accessibleName() for entry in center.dock.entries] == [
         'Timer', 'Navegador', 'Efectos de escritorio', 'Editor']
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v2'
+    center.select_page('general')
+    app.processEvents()
+    assert not center.banner.live and center.library_summary.text() == ''
+    v2_banner = center.banner.grab().toImage()
+    v2_samples = tuple(v2_banner.pixelColor(v2_banner.width() - 36, y).rgba()
+                       for y in (v2_banner.height() // 5, v2_banner.height() // 2))
+    assert v2_samples[0] != v2_samples[1]
+    v2_geometry = (center.banner.geometry().getRect(),
+                   tuple((child.objectName(), child.geometry().getRect())
+                         for child in center.banner.findChildren(module.QWidget)))
+    center.select_page('settings')
     pages = center.pages
     active_page = pages.currentWidget()
     chooser.setCurrentIndex(chooser.findData('v3'))
@@ -331,6 +355,19 @@ with TemporaryDirectory() as temporary:
     assert center.dock.pure and center.window.glass and center.pages is pages
     assert pages.currentWidget() is active_page and center.dock.panel.content is center.window
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v3'
+    center.select_page('general')
+    app.processEvents()
+    assert not center.banner.live and center.library_summary.text() == ''
+    v3_banner = center.banner.grab().toImage()
+    v3_samples = tuple(v3_banner.pixelColor(v3_banner.width() - 36, y).rgba()
+                       for y in (v3_banner.height() // 5, v3_banner.height() // 2))
+    assert v3_samples == v2_samples, (v2_banner.size(), v3_banner.size(),
+                                      v2_samples, v3_samples)
+    v3_geometry = (center.banner.geometry().getRect(),
+                   tuple((child.objectName(), child.geometry().getRect())
+                         for child in center.banner.findChildren(module.QWidget)))
+    assert v3_geometry == v2_geometry
+    center.select_page('settings')
     timer_dialog = center.goal_dialog(attached=True)
     assert 'color: #f7f7f7' in timer_dialog.findChild(module.QDateEdit).lineEdit().styleSheet()
     timer_dialog.close()
@@ -465,7 +502,11 @@ with TemporaryDirectory() as temporary:
         dock.reset_to_handle()
         with patch('edge_dock.time.monotonic', return_value=20.0) as now:
             dock.reveal()
-            for time_at_edge in (20.21, 20.23, 20.4, 20.9):
+            now.return_value = 20.5
+            dock.update_dock()
+            assert 0.0 < dock.progress < .1, 'El primer cuadro no debe saltar tras una pausa de Qt.'
+            assert dock.handle.isVisible() and not dock.gear.isVisible()
+            for time_at_edge in (20.5 + tick * .02 for tick in range(1, 12)):
                 now.return_value = time_at_edge
                 dock.update_dock()
                 assert dock.mask().contains(edge) and dock.transition_to == 1.0
@@ -476,22 +517,49 @@ with TemporaryDirectory() as temporary:
         dock.reset_to_handle()
     # The compact arrow needs no continuous desktop capture.
     dock.progress = dock.transition_to = dock.leave_at = 0.0
-    with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'capture') as capture:
-        cursor.pos.return_value = dock.geometry().topLeft() - module.QPoint(100, 100)
+    with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'capture') as capture, \
+            patch('edge_dock.energy_saver_active', return_value=False), \
+            patch('edge_dock.time.monotonic', return_value=30.0) as now:
         dock.backdrop = source = Mock(lens=None)
         dock.layer.frame = Mock()
+        cursor.pos.return_value = dock.mapToGlobal(edge)
         dock.reveal()
         assert dock.layer.frame is None and dock.layer.awaiting_open
         assert dock.last_frames is source.latest
+        now.return_value = 30.10
+        dock.update_dock()
+        warm_progress = dock.progress
+        assert 0.0 < dock.progress < 1.0 and not dock.glass_timer.isActive()
+        dock.prepare_layer()
+        assert not dock.capture_timer.isActive()
+        capture.assert_not_called()
+        for tick in range(1, 12):
+            now.return_value = 30.10 + tick * .02
+            dock.update_dock()
+        assert dock.progress == 1.0 and dock.glass_timer.isActive()
+        dock.glass_timer.stop()
+        dock.prepare_layer()
         assert dock.capture_timer.isActive()
         capture.assert_called_once()
-        dock.leave_at = 0.0
-        dock.update_dock()
+        cursor.pos.return_value = dock.geometry().topLeft() - module.QPoint(100, 100)
+        dock.reset_to_handle()
         assert not dock.capture_timer.isActive()
         assert dock.glass_idle_timer.isActive()
         dock.release_idle_capture()
         source.close.assert_called_once()
         assert dock.backdrop is None and not dock.glass_idle_timer.isActive()
+        cursor.pos.return_value = dock.mapToGlobal(edge)
+        now.return_value = 40.0
+        dock.reveal()
+        now.return_value = 40.10
+        dock.update_dock()
+        assert abs(dock.progress - warm_progress) < 1e-6
+        assert not dock.glass_timer.isActive() and not dock.capture_timer.isActive()
+        for tick in range(1, 12):
+            now.return_value = 40.10 + tick * .02
+            dock.update_dock()
+        assert dock.progress == 1.0 and dock.glass_timer.isActive()
+        dock.reset_to_handle()
     dock.progress = dock.transition_to = 1.0
     dock.leave_at = 0.0
     dock.motion_enabled = False
@@ -530,7 +598,7 @@ with TemporaryDirectory() as temporary:
 
     initial_height = panel.height()
     with patch('edge_dock.client_bounds', return_value=(0, 0, panel.width(), initial_height)), \
-            patch.object(panel.content, 'sizeHint', return_value=module.QSize(260, initial_height + 30)) as size_hint, \
+            patch.object(panel.content, 'sizeHint', return_value=QSize(260, initial_height + 30)) as size_hint, \
             patch.object(dock, 'capture'):
         panel.using_glass = True
         panel.fit_content()
@@ -540,7 +608,7 @@ with TemporaryDirectory() as temporary:
         QTest.qWait(160)
         assert panel.geometry() == target and panel.pending_geometry is None and panel.capture_tile is None
         assert panel.scroll.verticalScrollBarPolicy() == module.Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        size_hint.return_value = module.QSize(260, initial_height + 10)
+        size_hint.return_value = QSize(260, initial_height + 10)
         dock.motion_enabled = False
         panel.fit_content()
         assert panel.height() != target.height()

@@ -9,14 +9,13 @@ from pathlib import Path
 import re
 import uuid
 
+from app_identity import AppIdentity, WINDOWS_ICON_CACHE, file_icon_reference
 from app_packages import APP_ID, RESERVED, atomic_json, json_object
 from app_paths import application_root, development_mode
 
 
 MARKER = 'Ciceron.Library:'
 BUILTIN_TOOLS = frozenset(('clock', 'browser', 'effects'))
-BIRTHDAY_PACKAGE = 'emilioreato.happy-birthday'
-BIRTHDAY_APP_ID = 'Ciceron.HappyBirthday'
 
 
 @cache
@@ -74,7 +73,8 @@ def set_link_properties(path, app_id, tags):
     store = link.QueryInterface(IPropertyStore)
     props = C.OleDLL('propsys')
     keyword_key = Key(GUID('{F29F85E0-4FF9-1068-AB91-08002B27B3D9}'), 5)
-    set_app_identity(store, Key, Value, app_id)
+    if app_id:
+        set_app_identity(store, Key, Value, app_id)
     if tags:
         vector = (C.c_wchar_p * len(tags))(*tags)
         keywords = Value()
@@ -136,7 +136,8 @@ class StartMenuApps:
         if not executable.is_file() or (package and not self.ciceron.is_file()):
             raise ValueError('El ejecutable de la aplicación debe estar disponible.')
 
-        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ', item['name'][:100]).strip(' .') or 'Aplicación'
+        identity = AppIdentity.from_entry(item)
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ', identity.name[:100]).strip(' .') or 'Aplicación'
         if RESERVED.fullmatch(name.split('.')[0].rstrip()):
             name = 'Cicerón - ' + name
         self.folder.mkdir(parents=True, exist_ok=True)
@@ -149,16 +150,15 @@ class StartMenuApps:
             link.TargetPath = str(self.ciceron if package else executable)
             link.Arguments = f"--lanzar-paquete {package['id']}" if package else ''
             link.WorkingDirectory = str(executable.parent)
-            icon = Path(item['icon']) if item.get('icon') else executable
-            if icon.is_file() and icon.suffix.lower() in ('.exe', '.ico'):
-                link.IconLocation = str(icon) + ',0'
-            description = ', '.join(tags) if tags else item['name']
+            icon = identity.windows_icon(self.ciceron.parent / 'datos' / WINDOWS_ICON_CACHE)
+            icon, index = (icon, 0) if icon else (file_icon_reference(executable) or (self.ciceron, 0))
+            if icon.is_file():
+                link.IconLocation = f'{icon},{index}'
+            description = ', '.join(tags) if tags else identity.name
             link.Description = f'{MARKER}{shortcut_id(item)} {description}'[:240]
             link.Save()
-            if package:
-                app_id = (BIRTHDAY_APP_ID if package['id'] == BIRTHDAY_PACKAGE
-                          else 'Ciceron.Package.' + shortcut_id(item))
-                set_link_properties(tmp, app_id, tags)
+            if package or tags:
+                set_link_properties(tmp, identity.windows_id, tags)
             if path == existing:
                 tmp.replace(path)
             else:

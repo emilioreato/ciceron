@@ -62,11 +62,11 @@ El formato es ZIP con extensión `.ciceron`. Usa rutas relativas con `/` y nombr
 | `version` | Obligatoria. Tres enteros sin ceros a la izquierda, de hasta seis dígitos cada uno. Cicerón compara los números. |
 | `name` | Obligatorio. Hasta 80 caracteres visibles. |
 | `description` | Opcional. Hasta 240 caracteres. |
-| `tags` | Opcional. Hasta 12 etiquetas de 32 caracteres para buscar en General. El usuario puede editarlas en Cicerón. |
+| `tags` | Opcional. Hasta 12 etiquetas de 32 caracteres para buscar en General y en Inicio de Windows. Las ediciones del usuario se guardan en su perfil por ID de paquete y se conservan al actualizar la app. |
 | `entrypoint` | Obligatorio. Ruta relativa del `.exe`, `.py` o `.pyw` dentro del paquete. |
 | `python` | Obligatorio para `.py` y `.pyw`. Usa la cadena `"3.12"`. |
 | `args` | Opcional. Hasta 32 argumentos literales de hasta 512 caracteres. Se pasan como lista al ejecutable. |
-| `icon` | Opcional. Ruta de un PNG o ICO. Si se omite, Cicerón usa el icono del ejecutable. |
+| `icon` | Opcional. Ruta de un PNG o ICO. Cicerón usa ese icono en su biblioteca y en el acceso de Inicio de Windows, que convierte PNG a ICO cuando hace falta. |
 | `dock.visible` | Opcional. Por defecto `true`. Usa `false` para una app visible solo en la biblioteca. |
 | `dock.wheel` | Opcional. `passthrough` deja que la rueda sobre el icono llegue a la aplicación de fondo. `consume` evita ese reenvío solo encima de ese icono. |
 | `settings` | Opcional. Hasta 24 ajustes con `id`, `label`, `type` y `default`. Declara `"portable": false` para excluir rutas locales u otras preferencias del equipo. Los IDs usan minúsculas ASCII, números y guiones bajos, con letra inicial y hasta 40 caracteres. |
@@ -107,7 +107,7 @@ Las fechas son locales y de día completo en formato ISO `AAAA-MM-DD`. La app de
 - Usa widgets y layouts de Qt para los controles, `panel('title', …)` para el encabezado y los roles `primary` y `quiet` para los botones. Deja que `AttachedPanel` gestione la posición, el vidrio, los subpaneles y el cierre. Happy Birthday se integra mediante `birthday_host.py` y reutiliza los datos del paquete instalado.
 - Usa `open_subpanel` para pantallas secundarias. Mantén una acción principal clara y deja los ajustes secundarios en el menú de la app.
 - Cuando el panel dibuja el vidrio, evita añadir otra superficie de captura encima. El compositor PyOpenGL debe mezclar los controles redondeados sobre el vidrio base con alfa premultiplicado. Un píxel transparente de una esquina debe conservar el material de abajo.
-- Si la herramienta vive dentro del centro, usa su bandeja para los avisos y mantén la lógica de fondo independiente de la visibilidad del panel. Prueba V1, V2 y V3 sobre fondos claros y oscuros, y comprueba apertura, cierre y avisos con el panel oculto.
+- Si la herramienta vive dentro del centro, resuelve la identidad de sus avisos a partir de su entrada de biblioteca. Happy Birthday usa esa identidad para enviar el título «Cicerón · Happy Birthday» y el icono del paquete con su entrada de bandeja oculta. Las apps que se ejecutan como procesos independientes controlan sus propios avisos. Mantén la lógica de fondo independiente de la visibilidad del panel y comprueba apertura, cierre y avisos con el panel oculto.
 - Para componer el formulario usa [Qt Widgets y los layouts de PySide6](https://doc.qt.io/qtforpython-6/overviews/qtwidgets-layout.html). Para comprobar la mezcla del vidrio, usa PyOpenGL y la referencia de [mezcla alfa de OpenGL](https://registry.khronos.org/OpenGL-Refpages/gl4/html/glBlendFunc.xhtml). En este repo, `tests/centro.py` y `tests/contraste_vidrio.py` sirven como base para probar la interacción y el render.
 
 Una miniapp Python con ventanas Qt puede usar el material compartido cuando el centro se ejecuta desde fuentes. Si `CICERON_UI_ROOT` está presente, añade esa ruta a `sys.path` y usa `MiniappDialog` de `miniapp_ui` como base de la ventana. El diálogo usa los ajustes de apariencia del centro indicados por `CICERON_UI_CONFIG`. Mantén una alternativa si el centro no proporciona ese módulo. `paquetes/happy-birthday/` contiene un ejemplo con ventana propia y datos portables.

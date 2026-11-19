@@ -1,15 +1,18 @@
 """Cicerón frontend for the same agenda, notification history and data format."""
+from calendar import monthrange
 import csv
 from contextlib import nullcontext
 from datetime import date
+from html import escape
 from pathlib import Path
 import time
 
-from PySide6.QtCore import QDate, QEasingCurve, QEvent, QLocale, QPropertyAnimation, QSize, Qt, QTimer
-from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat
-from PySide6.QtWidgets import (QApplication, QCalendarWidget, QFileDialog, QGridLayout, QHBoxLayout,
-                               QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtCore import QEasingCurve, QEvent, QLocale, QPoint, QPropertyAnimation, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QKeySequence, QPainter, QShortcut
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QFileDialog, QFrame, QHeaderView,
+                               QGridLayout, QHBoxLayout,
+                               QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+                               QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
 
 from miniapp_ui import MiniappDialog, panel, stylesheet
 if __package__:
@@ -309,11 +312,18 @@ class Agenda(MiniappDialog):
             self.check_reminders()
 
     def open_year(self, selected=None):
+        if getattr(self, 'year_dialog', None) is not None:
+            self.year_dialog.raise_()
+            return
         calendar = Year(self, selected if isinstance(selected, date) else date.today())
-        try:
-            calendar.exec()
-        finally:
+        self.year_dialog = calendar
+
+        def finished():
+            self.year_dialog = None
             calendar.deleteLater()
+
+        calendar.finished.connect(finished)
+        calendar.open()
 
     def open_today(self):
         self.restore()
@@ -396,27 +406,37 @@ class Agenda(MiniappDialog):
         QApplication.instance().exit(0)
 
 
-class Year(MiniappDialog):
+class Year(QDialog):
     def __init__(self, agenda, selected):
-        super().__init__(agenda, attached=agenda.host is not None)
+        super().__init__(agenda, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setObjectName('yearOverlay')
         self.agenda = agenda
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setProperty('dockEmbedded', False)
-        if agenda.host is not None:
-            center = agenda.host.center
-            self.glass = False
-            self.setStyleSheet(stylesheet(center.window.dark, False, neutral=True))
         self.setWindowTitle('Almanaque')
-        work = agenda.screen().availableGeometry()
-        self.resize(min(1360, work.width() - 28), min(880, work.height() - 28))
-        self.move(work.center() - self.rect().center())
-        self.fade = QPropertyAnimation(self, b'windowOpacity', self)
-        self.fade.setStartValue(.35)
-        self.fade.setEndValue(1.0)
-        self.fade.setDuration(160)
-        self.fade.setEasingCurve(QEasingCurve.Type.OutCubic)
-        layout = QVBoxLayout(self)
+        screen = agenda.screen()
+        self.work = screen.availableGeometry()
+        self.setScreen(screen)
+        self.setGeometry(self.work)
+        self.snapshot = QImage()
+        self.origin = agenda.window().frameGeometry().translated(-self.work.topLeft())
+
+        work = self.work
+        width = min(work.width() - 24, max(640, round(min(1360, work.width() - 28) * .76)))
+        height = min(work.height() - 24, max(360, round(min(880, work.height() - 28) * .78)))
+        dark = agenda.host.center.window.dark if agenda.host else agenda.dark
+        self.setStyleSheet(stylesheet(dark, False, neutral=True))
+        self.card = QFrame(self)
+        self.card.setObjectName('card')
+        self.destination = QRect((work.width() - width) // 2, (work.height() - height) // 2, width, height)
+        self.card.setGeometry(self.destination)
+        self.content = QWidget(self.card)
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.addWidget(self.content)
+        layout = QVBoxLayout(self.content)
+        layout.setContentsMargins(20, 15, 20, 16)
         header = QHBoxLayout()
+        header.setSpacing(5)
         header.addWidget(panel('title', 'Almanaque'))
         header.addStretch()
         previous = action(header, '−', lambda: self.change(-1))
@@ -425,77 +445,175 @@ class Year(MiniappDialog):
         header.addWidget(self.year)
         following = action(header, '+', lambda: self.change(1))
         following.setAccessibleName('Año siguiente')
-        action(header, 'Hoy', lambda: self.show_date(date.today()))
-        action(header, 'Cerrar', self.accept)
+        today = action(header, 'Hoy', lambda: self.show_date(date.today()))
+        close = action(header, '×', self.accept)
+        close.setAccessibleName('Cerrar almanaque')
+        for button, button_width in ((previous, 26), (following, 26), (today, 42), (close, 27)):
+            button.setFixedSize(button_width, 26)
+            button.setStyleSheet('QPushButton { padding: 0; border-radius: 7px; }')
+            button.setAutoDefault(False)
         layout.addLayout(header)
-        self.detail = panel('muted', '')
-        self.detail.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail.setWordWrap(True)
-        layout.addWidget(self.detail)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         grid = QWidget()
         months = QGridLayout(grid)
+        months.setContentsMargins(0, 0, 0, 0)
+        months.setSpacing(14)
+        columns = 4 if width >= 850 else 3 if width >= 620 else 2
         spanish = QLocale(QLocale.Language.Spanish)
-        self.calendars = []
-        columns = 4 if self.width() >= 940 else 3 if self.width() >= 700 else 2
+        self.months = []
+        self.accent = QColor('#ff969c' if dark else '#a22b3e')
+        self.event_fill = QColor('#56333c' if dark else '#fbe6e9')
+        self.setStyleSheet(self.styleSheet() + f"""
+            QDialog#yearOverlay {{ background: transparent; }}
+            QTableWidget {{ background: transparent; border: none; font-size: 13px;
+                            selection-background-color: {'#723c46' if dark else '#a22b3e'};
+                            selection-color: white; }}
+            QHeaderView::section {{ background: transparent; border: none; padding: 2px; }}
+        """)
         for index in range(12):
-            month = QVBoxLayout()
-            month.addWidget(panel('heading', spanish.monthName(index + 1).capitalize()))
-            calendar = QCalendarWidget()
-            calendar.setLocale(spanish)
-            calendar.setNavigationBarVisible(False)
-            calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-            calendar.clicked.connect(lambda value: self.show_date(value.toPython()))
-            month.addWidget(calendar)
-            months.addLayout(month, index // columns, index % columns)
-            self.calendars.append(calendar)
+            tile = QVBoxLayout()
+            tile.setSpacing(5)
+            tile.addWidget(panel('heading', spanish.monthName(index + 1).capitalize()))
+            table = QTableWidget(6, 7)
+            table.setHorizontalHeaderLabels(('Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'))
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.horizontalHeader().setMinimumSectionSize(15)
+            table.verticalHeader().hide()
+            table.verticalHeader().setDefaultSectionSize(23)
+            table.verticalHeader().setMinimumSectionSize(23)
+            table.setFixedHeight(6 * 23 + 23)
+            table.setShowGrid(False)
+            table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.itemSelectionChanged.connect(lambda t=table: self.select_item(t))
+            table.itemClicked.connect(lambda item, t=table: self.pick_day(t, item))
+            tile.addWidget(table)
+            self.months.append(table)
+            months.addLayout(tile, index // columns, index % columns)
         scroll.setWidget(grid)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, 1)
         self.show_date(selected)
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.agenda.host is None or self.agenda.host.center.cfg.get('dock_motion', True):
-            self.fade.start()
+        QTimer.singleShot(32, self, self.load_backdrop)
+        motion = self.agenda.host is None or self.agenda.host.center.cfg.get('dock_motion', True)
+        origin = self.origin.intersected(self.rect())
+        if not motion or origin.isEmpty():
+            return
+        preview = QLabel(self.card)
+        preview.setPixmap(self.agenda.grab())
+        preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        preview.setGeometry(QRect(QPoint(0, 0), origin.size()))
+        self.content.hide()
+        self.card.setGeometry(origin)
+        preview.show()
+        animation = QPropertyAnimation(self.card, b'geometry', self)
+        animation.setStartValue(origin)
+        animation.setEndValue(self.destination)
+        animation.setDuration(230)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.finished.connect(self.content.show)
+        animation.finished.connect(preview.hide)
+        animation.finished.connect(preview.deleteLater)
+        animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def load_backdrop(self):
+        if self.isVisible():
+            self.snapshot = self.blur_work_area(self.screen())
+            self.update()
+
+    def blur_work_area(self, screen):
+        from focus_alert import capture_screen, gaussian_backdrop
+
+        image = capture_screen(screen)
+        ratio = screen.devicePixelRatio()
+        rect = self.work.translated(-screen.geometry().topLeft())
+        crop = image.copy(round(rect.x() * ratio), round(rect.y() * ratio),
+                          round(rect.width() * ratio), round(rect.height() * ratio))
+        return gaussian_backdrop(crop, max(1, round(5 * ratio)))
+
+    def paintEvent(self, event):
+        with QPainter(self) as painter:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            if not self.snapshot.isNull():
+                painter.drawImage(self.rect(), self.snapshot)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 38))
+
+    def mousePressEvent(self, event):
+        if not self.card.geometry().contains(event.position().toPoint()):
+            QToolTip.hideText()
+            self.reject()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def change(self, delta):
         year = self.selected.year + delta
         if 1 <= year <= 9999:
             self.show_date(date(year, self.selected.month, 1))
 
+    def pick_day(self, table, item):
+        if item.toolTip():
+            point = table.visualItemRect(item).bottomLeft()
+            QToolTip.showText(table.viewport().mapToGlobal(point), item.toolTip(), table)
+        else:
+            QToolTip.hideText()
+
+    def select_item(self, table):
+        items = table.selectedItems()
+        if items:
+            day = items[0].data(Qt.ItemDataRole.UserRole)
+            if day != self.selected:
+                self.show_date(day)
+
     def show_date(self, selected):
         previous = getattr(self, 'selected', None)
+        if previous is not None and previous.month != selected.month:
+            self.months[previous.month - 1].selectionModel().clear()
         self.selected = selected
         self.year.setText(str(selected.year))
         if previous is None or previous.year != selected.year:
-            if self.agenda.host is not None:
-                self.days = self.agenda.host.calendar_days(selected.year)
-            else:
-                self.days = {day: [entry.label for entry in entries]
-                             for day, entries in days_in_year(self.agenda.records.entries, selected.year).items()}
-            marked = QTextCharFormat()
-            marked.setFontWeight(QFont.Weight.Bold)
-            marked.setFontUnderline(True)
-            today = QDate.currentDate()
-            for index, calendar in enumerate(self.calendars, 1):
-                calendar.setDateTextFormat(QDate(), QTextCharFormat())
-                for day in self.days:
-                    if day.month == index:
-                        event_style = QTextCharFormat(marked)
-                        event_style.setToolTip('\n'.join(self.days[day]))
-                        calendar.setDateTextFormat(QDate(day.year, day.month, day.day), event_style)
-                if today.year() == selected.year and today.month() == index:
-                    today_style = QTextCharFormat(marked)
-                    today_style.setFontItalic(True)
-                    today_style.setToolTip('\n'.join(self.days.get(today.toPython(), ['Hoy'])))
-                    calendar.setDateTextFormat(today, today_style)
-        value = QDate(selected.year, selected.month, selected.day)
-        for index, calendar in enumerate(self.calendars, 1):
-            calendar.setSelectedDate(value)
-            calendar.setCurrentPage(selected.year, index)
-        names = ', '.join(self.days.get(selected, ()))
-        self.detail.setText(f'{selected:%d-%m-%Y} · {names or "Sin eventos"}')
+            self.refresh_dates(selected.year)
+        first, _ = monthrange(selected.year, selected.month)
+        row, column = divmod(first + selected.day - 1, 7)
+        self.months[selected.month - 1].setCurrentCell(row, column)
+
+    def refresh_dates(self, year):
+        if self.agenda.host is not None:
+            events = self.agenda.host.calendar_days(year)
+        else:
+            events = {day: [entry.label for entry in entries]
+                      for day, entries in days_in_year(self.agenda.records.entries, year).items()}
+        today = date.today()
+        for month, table in enumerate(self.months, 1):
+            first, count = monthrange(year, month)
+            table.clearContents()
+            for day in range(1, count + 1):
+                value = date(year, month, day)
+                names = events.get(value, ())
+                row, column = divmod(first + day - 1, 7)
+                item = QTableWidgetItem(str(day))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setData(Qt.ItemDataRole.UserRole, value)
+                item.setData(Qt.ItemDataRole.AccessibleTextRole, f'{value:%d-%m-%Y}')
+                if names or column >= 5 or value == today:
+                    item.setForeground(QBrush(self.accent))
+                if names or value == today:
+                    font = table.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                if names:
+                    item.setBackground(QBrush(self.event_fill))
+                    details = '<br>'.join(escape(name) for name in names)
+                    item.setToolTip(f'<b>{value:%d-%m-%Y}</b><br>{details}')
+                table.setItem(row, column, item)
 
 
 def run(folder, instance):

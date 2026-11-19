@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QStyle, QStyleOptionButton, QWidget
 )
 
+from center_ui import APP_CARD_IDENTITY_RADIUS, AppCardIdentity, V3_CONTROL_RADIUS
 from gpu_lens import EDGE_OPTICS, VERTEX, compile_lens, paint_optic
 from windows_glass import BackdropCapture, apply_capture_affinity, capture_mode, get_style
 
@@ -138,14 +139,19 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
     text_surfaces = []
     try:
         for widget in owner.findChildren(QWidget):
-            if not isinstance(widget, (QLabel, QAbstractButton, QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit)):
+            if not isinstance(widget, (AppCardIdentity, QLabel, QAbstractButton, QLineEdit,
+                                       QComboBox, QAbstractSpinBox, QPlainTextEdit)):
                 continue
             if widget.window() != owner.window() or not widget.isVisible() or not widget.width() or not widget.height():
                 continue
             if isinstance(widget, QLineEdit) and isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
                 continue
-            is_text = isinstance(widget, (QLabel, QCheckBox))
-            area = glass_text_rect(widget) if is_text else widget.rect()
+            grouped = isinstance(widget, AppCardIdentity)
+            is_label = isinstance(widget, (QLabel, QCheckBox))
+            if is_label and isinstance(widget.parentWidget(), AppCardIdentity):
+                continue
+            is_text = grouped or is_label
+            area = glass_text_rect(widget) if is_label else widget.rect()
             if area.isEmpty():
                 continue
             area.translate(widget.mapTo(owner, QPoint()))
@@ -159,13 +165,13 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
             if clip.isEmpty():
                 continue
             if is_text:
-                text_surfaces.append((area, clip))
+                text_surfaces.append((area, clip, APP_CARD_IDENTITY_RADIUS if grouped else 12))
                 continue
             scissor(clip)
-            draw(QRectF(area), 11, 3 if frost else 2)
-        for area, clip in text_surfaces:
+            draw(QRectF(area), V3_CONTROL_RADIUS, 3 if frost else 2)
+        for area, clip, corner in text_surfaces:
             scissor(clip)
-            draw(QRectF(area), 12, 5 if light_text_background else 4)
+            draw(QRectF(area), corner, 5 if light_text_background else 4)
     finally:
         if not blend_was_enabled:
             GL.glDisable(GL.GL_BLEND)

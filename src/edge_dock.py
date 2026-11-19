@@ -12,7 +12,8 @@ from PySide6.QtGui import (
     QRegion, QShortcut, QSurfaceFormat
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtWidgets import QApplication, QDialog, QMenu, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QAbstractScrollArea, QApplication, QDialog, QMenu, QScrollArea,
+                               QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from gpu_lens import compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
@@ -120,7 +121,7 @@ class DockHandle(QToolButton):
         # Layered Windows surfaces ignore pointer hits on fully transparent pixels.
         # The fixed edge strip already paints the outermost pixels.
         painter.fillRect(self.rect().adjusted(0, 0, -(dock.EDGE_INSET + 1), 0), QColor(255, 255, 255, 1))
-        opacity = 1 - min(1.0, dock.progress / dock.HANDLE_FADE_END)
+        opacity = 1 - min(1.0, dock.progress / dock.HANDLE_OPACITY_END)
         if opacity <= 0:
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
@@ -470,7 +471,8 @@ class AttachedPanel(QWidget):
             }}
             QWidget#dockPanel QPushButton {{ padding: 5px 10px; }}
             QWidget#dockPanel QListWidget {{
-                background: {fill}; color: {ink}; border: none; border-radius: 9px; padding: 4px;
+                background: {fill}; color: {ink}; border: none; border-radius: 12px;
+                padding: 4px 6px 9px;
             }}
             QWidget#dockPanel QListWidget::item {{ padding: 5px 8px; }}
             QWidget#dockPanel QListWidget::item:selected {{ background: {hover}; color: {ink}; }}
@@ -629,6 +631,15 @@ class AppWheelFilter(QAbstractNativeEventFilter):
         if is_external_window(active):
             self.previous_app = active
 
+    def scrollable_widget_at_cursor(self, horizontal=False):
+        widget = QApplication.widgetAt(QCursor.pos())
+        while widget is not None and widget is not self.controller.window:
+            if isinstance(widget, QAbstractScrollArea):
+                bar = widget.horizontalScrollBar() if horizontal else widget.verticalScrollBar()
+                return bar.maximum() > bar.minimum()
+            widget = widget.parentWidget()
+        return False
+
     def nativeEventFilter(self, event_type, message):
         if event_type != b'windows_generic_MSG':
             return False, 0
@@ -640,6 +651,8 @@ class AppWheelFilter(QAbstractNativeEventFilter):
             if is_external_window(previous):
                 self.previous_app = previous
         if msg.message not in (0x020A, 0x020E):
+            return False, 0
+        if self.scrollable_widget_at_cursor(horizontal=msg.message == 0x020E):
             return False, 0
         dock = self.controller.dock
         if dock is not None and dock.isVisible() and window_belongs_to(msg.hWnd, int(dock.winId())):
@@ -664,6 +677,8 @@ class EdgeDock(QWidget):
     HOVER_PROBE_MS = 40
     HIDE_DELAY = 0.075
     HANDLE_FADE_END = 0.90
+    HANDLE_OPACITY_END = 0.62
+    MAX_TRANSITION_STEP = 0.024
 
     def __init__(self, icon, open_settings, *, tray_geometry=None):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
@@ -708,7 +723,8 @@ class EdgeDock(QWidget):
         self._capture_folded = True
         self.capacity = 1
         self.leave_at = 0.0
-        self.transition_start = 0.0
+        self.transition_tick = 0.0
+        self.transition_elapsed = 0.0
         self.transition_from = 0.0
         self.transition_to = 0.0
         self.started = time.monotonic()
@@ -796,9 +812,7 @@ class EdgeDock(QWidget):
                     self.panel.capture_enabled = self.panel.prepare_layer(False)
 
     def prepare_layer(self):
-        if capture_mode() or not self.isVisible():
-            return
-        if self.progress == 0 and self.transition_to == 0 and self.panel is None and self.pending_panel is None:
+        if capture_mode() or not self.isVisible() or self.progress < 1.0:
             return
         full = self.glass_enabled and not energy_saver_active()
         if full and self.backdrop is None:
@@ -806,13 +820,14 @@ class EdgeDock(QWidget):
             self.layer.lower()
             if self.layer.isValid() and not self.layer.error and apply_capture_affinity(self, live=True):
                 self.backdrop = DockBackdropCapture()
-                if self.animation.isActive():
-                    self.capture_timer.start(33)
-                self.capture()
         if not full and self.backdrop is not None:
             self.stop_capture()
         if self.panel is not None:
             self.panel.capture_enabled = self.panel.prepare_layer(self.backdrop is not None)
+        if self.backdrop is not None and not self.capture_timer.isActive():
+            self.capture_timer.start(33)
+            self.capture()
+        self.set_capture_folded(False)
 
     def stop_capture(self):
         self.glass_idle_timer.stop()
@@ -827,6 +842,7 @@ class EdgeDock(QWidget):
         self.layer.frame_bounds = None
         self.layer.light = None
         self.layer.update()
+        self._capture_folded = self.progress < 1.0
         apply_capture_affinity(self, live=False)
         self.apply_glass_tone(True)
         self.update()
@@ -922,15 +938,12 @@ class EdgeDock(QWidget):
         self.hover_blocked = False
         self.glass_idle_timer.stop()
         self.leave_at = time.monotonic() + self.HIDE_DELAY
-        if self.glass_enabled and not capture_mode() and self.backdrop is None and not self.glass_timer.isActive():
-            # Show the provisional glass before starting the desktop capture.
-            self.glass_timer.start(48)
         if not self.animation.isActive():
             self.animation.start(16)
         self.update_dock()
-        if self.backdrop is not None and self.transition_to and not self.capture_timer.isActive():
-            self.capture_timer.start(33)
-            self.capture()
+        if (self.progress == 1.0 and self.glass_enabled and not capture_mode() and
+                not self.capture_timer.isActive() and not self.glass_timer.isActive()):
+            self.glass_timer.start(24)
 
     def update_dock(self):
         now = time.monotonic()
@@ -944,17 +957,24 @@ class EdgeDock(QWidget):
             if target and previous == 0 and self.glass_enabled and self.motion_enabled and not capture_mode():
                 # A previously open dock must not show a different first frame after a quick revisit.
                 self.last_frames = self.backdrop.latest if self.backdrop is not None else None
+                self.capture_timer.stop()
+                self.using_glass = False
                 self.layer.frame = None
                 self.layer.frame_bounds = None
+                self.layer.light = None
                 self.layer.reset_handoff()
                 self.layer.awaiting_open = True
-            self.transition_start = now
+            self.transition_tick = now
+            self.transition_elapsed = 0.0
             self.transition_from = previous
             self.transition_to = target
         if self.motion_enabled and previous != target:
             distance = abs(target - self.transition_from)
-            duration = (.18 if target else .32) * max(.45, distance)
-            t = min(1.0, (now - self.transition_start) / duration)
+            duration = (.22 if target else .32) * max(.45, distance)
+            # Event-loop stalls must not consume unseen frames of the transition.
+            self.transition_elapsed += min(now - self.transition_tick, self.MAX_TRANSITION_STEP)
+            self.transition_tick = now
+            t = min(1.0, self.transition_elapsed / duration)
             self.progress = self.transition_from + (target - self.transition_from) * t * t * (3 - 2 * t)
         else:
             self.progress = target
@@ -962,6 +982,9 @@ class EdgeDock(QWidget):
             self.layout_icons()
             if self.layer.isVisible():
                 self.layer.update()
+            if self.progress == 1.0 and self.glass_enabled and not capture_mode():
+                # Let the final frame of the reveal paint before resuming capture.
+                self.glass_timer.start(24)
         if self.progress == 0.0 and not target:
             self.animation.stop()
             self.layer.reset_handoff()
@@ -994,12 +1017,16 @@ class EdgeDock(QWidget):
         self.pending_open_timer.stop()
         self.pending_panel = None
 
-    def layout_icons(self):
-        folded = self.progress < self.HANDLE_FADE_END
+    def set_capture_folded(self, folded):
         if self._capture_folded != folded:
             self._capture_folded = folded
-            if self.isVisible():
+            if self.isVisible() and not getattr(self, '_capture_live', False):
                 apply_capture_affinity(self)
+
+    def layout_icons(self):
+        folded = self.progress < self.HANDLE_FADE_END
+        if self.progress < 1.0 or not self.layer.awaiting_open:
+            self.set_capture_folded(self.progress < 1.0)
         rows = self.entries[:self.capacity] + [self.gear]
         icons_visible = self.progress > .76
         self.handle.setVisible(folded)
@@ -1218,7 +1245,7 @@ class EdgeDock(QWidget):
         self.layout_icons()
         self.position_panel(self.panel)
         self.panel.content.show()
-        live = self.backdrop is not None
+        live = self.capture_timer.isActive()
         self.panel.apply_glass_tone(self.layer.light if live else None)
         if not persistent:
             self.panel.fit_content()
@@ -1229,7 +1256,8 @@ class EdgeDock(QWidget):
         self.panel_session += 1
         if QApplication.platformName() == 'windows':
             self.panel_mouse_press.start(int(self.winId()), self.panel_session)
-        self.capture()
+        if live:
+            self.capture()
         self.reveal()
 
     def position_panel(self, panel):

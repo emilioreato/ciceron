@@ -1,7 +1,7 @@
 """The native Cicerón window and its shared appearance."""
 from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QFrame, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 
 class PreferenceBox(QComboBox):
@@ -32,6 +32,34 @@ def dark_mode(theme):
 
 
 UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
+V3_CONTROL_RADIUS = 11
+APP_CARD_IDENTITY_RADIUS = 12
+
+
+class AppCardIdentity(QFrame):
+    """Icon and copy form one visual surface within a library card."""
+    def __init__(self, icon, title, detail):
+        super().__init__()
+        self.setObjectName('appCardIdentity')
+        row = QHBoxLayout(self)
+        row.setContentsMargins(9, 6, 10, 6)
+        row.setSpacing(10)
+        self.badge = QLabel()
+        self.badge.setObjectName('appCardIcon')
+        self.set_icon(icon)
+        row.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        for label in (title, detail):
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+            label.setSizePolicy(policy)
+            text.addWidget(label)
+        detail.setWordWrap(True)
+        row.addLayout(text, 1)
+
+    def set_icon(self, icon):
+        self.badge.setPixmap(icon.pixmap(30, 30))
 
 
 def clear_styles(scope='', light=False, frost_controls=False, live_controls=False):
@@ -47,8 +75,10 @@ def clear_styles(scope='', light=False, frost_controls=False, live_controls=Fals
         rule('QCheckBox', f'color: {label_color}; background: transparent;'),
         rule('QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#centerTabs, QFrame#clockCard, QFrame#browserCard, QFrame#effectsCard, QFrame#appCard',
              'background: transparent; border-color: transparent;'),
+        rule('QFrame#appCardIdentity', f'border-radius: {APP_CARD_IDENTITY_RADIUS}px; '
+             f'background: {"transparent" if live_controls else "rgba(30,30,30,145)"};'),
         rule(controls + ', QPushButton#primary, QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QFrame#centerTabs QPushButton#nav, QFrame#appCard QPushButton',
-             'background: rgba(30,30,30,128); border: 1px solid transparent; border-radius: 11px; color: #fafafa;'),
+             f'background: rgba(30,30,30,128); border: 1px solid transparent; border-radius: {V3_CONTROL_RADIUS}px; color: #fafafa;'),
         rule('QPushButton:hover, QPushButton:focus, QPushButton#quiet:hover, QPushButton#primary:hover, QFrame#centerTabs QPushButton#nav:focus',
              'background: rgba(56,56,56,165); border-color: transparent;'),
         rule('QPushButton:checked, QPushButton:pressed, QFrame#centerTabs QPushButton#nav:checked',
@@ -108,7 +138,8 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     QLabel#heroTitle {{ color: white; font-size: 31px; font-weight: 650; }}
     QLabel#heroDetail {{ color: #e3eaff; font-size: 14px; }}
     QLabel#brand {{ font-size: 21px; font-weight: 650; }}
-    QFrame#sidebar, QFrame#card, QFrame#timeCard {{
+    QFrame#sidebar, QFrame#card, QFrame#timeCard, QFrame#clockCard, QFrame#browserCard,
+    QFrame#effectsCard, QFrame#appCard {{
         background: {surface}; border: 1px solid {rim}; border-radius: 20px;
     }}
     QFrame#timeCard {{ border-color: {stroke}; }}

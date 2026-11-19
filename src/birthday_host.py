@@ -7,8 +7,9 @@ import sys
 import types
 import winreg
 
+from app_identity import AppIdentity, BIRTHDAY_PACKAGE, WINDOWS_ICON_CACHE
 from calendar_data import CalendarEvent, read_events
-from start_menu import BIRTHDAY_APP_ID, BIRTHDAY_PACKAGE, set_window_identity
+from start_menu import set_window_identity
 
 
 APP_ID = BIRTHDAY_PACKAGE
@@ -30,8 +31,18 @@ class BirthdayHost:
     def __init__(self, center, item):
         self.center = center
         self.item = item
+        self.identity = AppIdentity.from_entry(item)
         self.agenda = None
         self.notification_tray = None
+
+    def update_entry(self, item):
+        if item == self.item:
+            return
+        self.item = item
+        identity = AppIdentity.from_entry(item)
+        if (identity.name, identity.icon) != (self.identity.name, self.identity.icon):
+            self.close_notification()
+        self.identity = identity
 
     def prepare(self):
         if self.agenda is not None:
@@ -51,18 +62,24 @@ class BirthdayHost:
             return False
         if self.notification_tray is None:
             module = agenda_module()
-            tray = module.Tray(self.agenda, self.agenda.path.parent, module.HERE / 'icono.ico',
-                               self.open_panel, None)
+            cache = self.center.packages.data.parent / WINDOWS_ICON_CACHE
+            try:
+                icon = self.identity.windows_icon(cache)
+            except OSError:
+                icon = None
+            tray = module.Tray(self.agenda, self.agenda.path.parent, icon or module.HERE / 'icono.ico',
+                               self.open_panel, None, hidden=True)
             try:
                 if not tray.available:
                     tray.close()
                     return False
-                set_window_identity(tray.hwnd, BIRTHDAY_APP_ID)
+                set_window_identity(tray.hwnd, self.identity.windows_id)
             except (OSError, COMError):
                 tray.close()
                 return False
             self.notification_tray = tray
-        return self.notification_tray.show(title, body, acknowledged)
+        heading, body = self.identity.notification_text(title, body)
+        return self.notification_tray.show(heading, body, acknowledged)
 
     def open_panel(self):
         dock = self.center.dock
@@ -82,7 +99,7 @@ class BirthdayHost:
             days[event.day].append(event.title)
         return days
 
-    def close(self):
+    def close_notification(self):
         if self.notification_tray is not None:
             tray = self.notification_tray
             self.notification_tray = None
@@ -92,6 +109,9 @@ class BirthdayHost:
                 pass
             finally:
                 tray.close()
+
+    def close(self):
+        self.close_notification()
         if self.agenda is not None:
             dock = self.center.dock
             if dock is not None and dock.panel is not None and dock.panel.content is self.agenda:

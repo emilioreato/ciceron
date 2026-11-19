@@ -5,11 +5,12 @@ import sys
 from unittest.mock import patch
 
 from PySide6.QtCore import QPoint
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QRegion
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QPushButton, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from window_glass import GlassBackdrop, glass_text_rect
+from center_ui import AppCardIdentity
 from edge_dock import EdgeDock
 from windows_glass import CapturePrivacy, bind, client_bounds, root_window, user, window_at
 
@@ -143,6 +144,22 @@ painter.end()
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
 assert variation(position.y()) < variation(22) * .65, 'Falta el desenfoque tras el texto.'
+label.hide()
+checkbox.hide()
+icon = QPixmap(30, 30)
+icon.fill(QColor('#6754a5'))
+identity = AppCardIdentity(QIcon(icon), QLabel('Happy Birthday'), QLabel('Agenda de cumpleaños'))
+identity.setParent(window)
+identity.setGeometry(60, 38, 242, 63)
+identity.show()
+app.processEvents()
+source.fill(QColor('white'))
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+for widget in identity.findChildren(QLabel):
+    point = widget.mapTo(window, widget.rect().center())
+    assert contrast(QColor('#f0f2f6'), sample(point.x(), point.y())) >= 4.5
+assert sample(180, 25).lightness() > 220, 'La superficie debe quedar dentro de la tarjeta.'
 window.close()
 
 # Render the actual V2 dock shader against known backgrounds without capturing the desktop.
@@ -193,13 +210,15 @@ def center_pixel():
     return frame.pixelColor(round(center.x()), round(center.y()))
 
 # The rim is already present alongside the fading icons with no desktop frame.
-dock.progress = .82
+dock.progress = 1.0
 dock.layout_icons()
-assert dock.gear.isVisible()
 with patch('edge_dock.energy_saver_active', return_value=True), \
         patch('edge_dock.DockBackdropCapture') as capture:
     dock.prepare_layer()
     capture.assert_not_called()
+dock.progress = .82
+dock.layout_icons()
+assert dock.gear.isVisible()
 for pure in (False, True):
     dock.pure = pure
     frame = dock.layer.grabFramebuffer()

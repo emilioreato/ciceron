@@ -101,13 +101,15 @@ def ellipsize(value, utf16_units):
 
 
 class Tray:
-    def __init__(self, root, data_folder, icon, restore, quit_app, on_clock=None, on_click=None):
+    def __init__(self, root, data_folder, icon, restore, quit_app, on_clock=None, on_click=None, *,
+                 hidden=False):
         self.available = False
         self.in_flight = None
         if os.name != "nt":
             return
         self.root, self.restore, self.quit_app = root, restore, quit_app
         self.on_clock, self.on_click = on_clock, on_click
+        self.hidden = hidden
         self.name = app_name(data_folder)
         self.instance = Module(None)
         self.proc = WNDPROC(self._events)
@@ -154,7 +156,7 @@ class Tray:
         return DefWindow(hwnd, message, w_param, l_param)
 
     def _restore_after_restart(self):
-        if not self.ensure() and self.root.state() == "withdrawn":
+        if not self.ensure() and not self.hidden and self.root.state() == "withdrawn":
             self.restore()
 
     def _menu(self):
@@ -188,6 +190,9 @@ class Tray:
         if not self.visible:
             data = self._data()
             data.flags = 1 | 2 | 4 | 0x80  # NIF_SHOWTIP for version 4
+            if self.hidden:
+                data.flags |= 8  # NIF_STATE
+                data.state = data.state_mask = 1  # NIS_HIDDEN
             data.icon = self.icon
             data.tip = "Happy Birthday · Abrir agenda"
             data.callback = CALLBACK
@@ -209,13 +214,21 @@ class Tray:
         data.flags = 0x10
         data.info = ellipsize(body, 255)
         data.title = ellipsize(title, 63)
-        data.info_flags = 1 | 0x80  # NIIF_INFO | NIIF_RESPECT_QUIET_TIME
+        data.info_flags = (4 if self.hidden else 1) | 0x80  # NIIF_USER or NIIF_INFO, with quiet time
+        if self.hidden:
+            data.balloon_icon = self.icon
         data.timeout_or_version = 10000
         self.in_flight = (on_shown, monotonic())
-        if not Notify(1, C.byref(data)):
-            self.in_flight = None
-            return False
-        return True
+        if Notify(1, C.byref(data)):
+            return True
+        if self.hidden:
+            # Some shells accept a hidden icon but reject a custom balloon icon.
+            data.info_flags = 1 | 0x80
+            data.balloon_icon = None
+            if Notify(1, C.byref(data)):
+                return True
+        self.in_flight = None
+        return False
 
     def close(self):
         if os.name != "nt":

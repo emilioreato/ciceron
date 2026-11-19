@@ -2,21 +2,22 @@
 import ctypes, datetime as dt, json, math, os, sys, time, winreg
 from ctypes import wintypes
 from _ctypes import COMError
+from app_identity import AppIdentity, file_icon_reference, resource_icon
 from app_paths import (application_root, data_root, development_mode, instance_suffix,
                        resolve_app_path, source_installation_root, stored_app_path, windows_appdata_root)
 from app_packages import PACKAGE_EXT, PackageStore, app_tags, fold_search
 from browser_ui import BrowserDialog
-from center_ui import UI_VERSIONS, clear_styles, CenterWindow, GlassDialog, LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet
+from center_ui import (UI_VERSIONS, AppCardIdentity, clear_styles, CenterWindow, GlassDialog,
+                       LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet)
 from visual_playground import VisualDialog
 from pathlib import Path
-from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, Qt,
+from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, QSize, Qt,
                             QTimer, QDate, QTime, Signal)
 from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
-    QAbstractSpinBox, QCalendarWidget, QSizePolicy, QStackedWidget, QToolButton)
-from PySide6.QtCore import QSize
+    QAbstractSpinBox, QCalendarWidget, QStackedWidget, QToolButton)
 from package_ui import edit_settings, install_packages
 from data_ui import export_dialog, import_dialog
 from power_state import low_power
@@ -505,10 +506,17 @@ class App:
         self.nav.button(self.page_ids['general']).setChecked(True)
 
     def apply_appearance(self, *_):
+        from edge_dock import tool_icon
+
         monochrome = self.cfg['ui_version'] == 'v1'
         self.window.monochrome = monochrome
         self.window.dark = False if monochrome else dark_mode(self.cfg['theme'])
         self.window.glass = self.cfg['ui_version'] == 'v3' or (bool(self.cfg['glass']) and not monochrome)
+        for frame, _ in self.builtin_cards:
+            key = frame.objectName().removesuffix('Card')
+            frame.findChild(AppCardIdentity).set_icon(tool_icon(
+                'lens' if key == 'effects' else key,
+                light_background=not (self.window.glass or self.window.dark)))
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
         pure = self.cfg['ui_version'] == 'v3' and self.window.glass
@@ -547,8 +555,10 @@ class App:
         self.banner.glass = not self.window.monochrome
         app = QApplication.instance()
         appearance = stylesheet(self.window.dark, self.window.glass, self.window.monochrome)
-        self.banner.live = bool(app.property('pureGlass'))
-        if self.banner.live:
+        pure_glass = bool(app.property('pureGlass'))
+        # Keep the V2 painted banner artwork in every UI version.
+        self.banner.live = False
+        if pure_glass:
             appearance += clear_styles()
         if app.styleSheet() != appearance:
             app.setStyleSheet(appearance)
@@ -565,6 +575,7 @@ class App:
         layout.setSpacing(2)
         layout.addWidget(caption('Mis aplicaciones', 'heroTitle'))
         self.library_summary = caption('', 'heroDetail')
+        self.library_summary.setFixedHeight(self.library_summary.fontMetrics().height())
         layout.addWidget(self.library_summary)
         layout.addStretch()
         self.import_button = button('Importar aplicaciones', self.add_app)
@@ -589,8 +600,11 @@ class App:
             ('effects', 'Efectos de escritorio', 'Burbuja y partículas', ('Liquid Glass', 'lente', 'animación')),
         ):
             detail = self.card(content, title, description,
-                               [('Abrir', lambda checked=False, tool=key: self.open_tool(tool))], style=key + 'Card')
-            self.builtin_cards.append((detail.parentWidget(), fold_search(' '.join((title, description, *tags)))))
+                               [('Abrir', lambda checked=False, tool=key: self.open_tool(tool))],
+                               image=tool_icon('lens' if key == 'effects' else key),
+                               style=key + 'Card')
+            self.builtin_cards.append((detail.parentWidget().parentWidget(),
+                                       fold_search(' '.join((title, description, *tags)))))
             if key == 'clock':
                 self.goal_detail = detail
 
@@ -743,24 +757,18 @@ class App:
             box = QHBoxLayout(frame)
             box.setContentsMargins(11, 4, 9, 4)
         box.setSpacing(12)
-        if image is not None:
-            badge = QLabel()
-            badge.setPixmap(image.pixmap(QSize(30, 30)))
-            box.addWidget(badge)
-        text = QVBoxLayout()
-        text.setSpacing(3)
         title = caption(name, 'heading')
-        text.addWidget(title)
         detail = caption(description, 'muted')
-        if style == 'appCard':
-            for label in (title, detail):
-                policy = label.sizePolicy()
-                policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
-                label.setSizePolicy(policy)
-        text.addWidget(detail)
+        if image is not None:
+            box.addWidget(AppCardIdentity(image, title, detail), 1)
+        else:
+            text = QVBoxLayout()
+            text.setSpacing(3)
+            text.addWidget(title)
+            text.addWidget(detail)
+            box.addLayout(text, 1)
         if not description:
             detail.hide()
-        box.addLayout(text, 1)
         actions_row = box
         if len(actions) > 1:
             actions_row = QHBoxLayout()
@@ -960,9 +968,7 @@ class App:
         if self.bad_apps or self.package_error:
             self.library_summary.setText('Biblioteca pendiente de revisión')
         else:
-            total = len(self.library_apps())
-            word = 'aplicación guardada' if total == 1 else 'aplicaciones guardadas'
-            self.library_summary.setText(f'{total} {word}')
+            self.library_summary.clear()
         self.refresh_dock()
         if self.pages.currentIndex() == self.page_ids['general']:
             self.render_library()
@@ -1034,26 +1040,19 @@ class App:
             menu.addAction('Desinstalar paquete' if spec else 'Quitar de Cicerón',
                            lambda checked=False, i=item: self.remove(i))
             more.setMenu(menu)
-            description = f"Versión {spec['version']}" if spec else 'Acceso vinculado'
+            description = (spec['description'] or f"Versión {spec['version']}") if spec else 'Acceso vinculado'
             if not exists:
                 description = 'Archivo no encontrado'
-            elif tags:
-                description = ' · '.join(tags[:2])
             detail = self.card(self.library_rows, item['name'], description,
                                [('Abrir', lambda checked=False, i=item: self.launch(i))] if exists else (),
                                control=more, image=self.app_icon(item), style='appCard')
             tooltip = self.app_description(item)
             if tags:
                 tooltip += '\nEtiquetas: ' + ', '.join(tags)
-            detail.parentWidget().setToolTip(tooltip)
+            detail.parentWidget().parentWidget().setToolTip(tooltip)
 
     def tags_for(self, item):
-        package = item.get('package')
-        values = self.package_tags.get(package['id'], package.get('tags', [])) if package else item.get('tags', [])
-        try:
-            return app_tags(values)
-        except ValueError:
-            return []
+        return list(AppIdentity.from_entry(item, self.package_tags).tags)
 
     def edit_app_tags(self, item):
         value, accepted = QInputDialog.getText(self.window, 'Editar etiquetas', 'Separá las etiquetas con comas',
@@ -1108,12 +1107,21 @@ class App:
         return self.apps + self.managed_apps
 
     def app_icon(self, item):
-        if item.get('icon'):
-            bundled = QIcon(item['icon'])
+        path = AppIdentity.from_entry(item).icon
+        if path:
+            bundled = QIcon(str(path))
             if not bundled.isNull():
                 return bundled
-        # QFileIconProvider's per-path lookup can load a shell extension on
-        # the GUI thread. A generic icon keeps linked files cheap to display.
+        reference = file_icon_reference(Path(item['path']))
+        if reference:
+            path, index = reference
+            try:
+                embedded = resource_icon(path, index, path.stat().st_mtime_ns)
+            except OSError:
+                pass
+            else:
+                if not embedded.isNull():
+                    return embedded
         return self.file_icons.icon(QFileIconProvider.IconType.File)
 
     @staticmethod
@@ -1281,6 +1289,8 @@ class App:
             return None
         if self.birthday_host is None:
             self.birthday_host = BirthdayHost(self, item)
+        else:
+            self.birthday_host.update_entry(item)
         first_load = self.birthday_host.agenda is None
         try:
             agenda = self.birthday_host.prepare()
@@ -1301,8 +1311,10 @@ class App:
                     agenda = self.prepare_birthday()
                     if agenda is None:
                         raise ValueError('Cierra la agenda anterior o revisa su archivo de datos antes de abrir Happy Birthday.')
-                    agenda.check_reminders()
                     self.show_edge_dock()
+                    pending = self.dock.pending_panel
+                    if pending is not None and pending[0] == APP_ID:
+                        return
                     self.dock.toggle_panel(APP_ID, lambda: agenda, persistent=True)
                     return
                 self.packages.launch(item)
