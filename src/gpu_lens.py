@@ -24,8 +24,9 @@ float lip_inset(float depth, float width) {
 }
 '''
 
-# Cambio 77: the V3 window base uses a deeper neutral frost, separate from white frosted controls.
-CLEAR_MODE_FROSTED_WINDOW = 6.0
+# V3 keeps the original refractive background. Change 77's frost is used by V4 and V3 controls.
+CLEAR_MODE_LIQUID_GLASS = 1.0
+CLEAR_MODE_GAUSSIAN_FROST = 6.0
 
 FRAGMENT = '''#version 120
 uniform sampler2D backdrop;
@@ -97,11 +98,11 @@ void main() {
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
         if (clear_mode > 1.5) {
             // Prefilter the backdrop before the widely spaced Gaussian taps.
-            bool window_frost = clear_mode > 5.5;
-            bool frosted = (clear_mode > 2.5 && clear_mode < 3.5) || window_frost;
+            bool gaussian_frost = clear_mode > 5.5;
+            bool frosted = (clear_mode > 2.5 && clear_mode < 3.5) || gaussian_frost;
             float lod = frosted ? 2.5 : 1.5;
-            if (window_frost) lod = 3.0;
-            vec2 d = (window_frost ? 6.0 : (frosted ? 5.0 : 3.2)) * sample_scale / extent;
+            if (gaussian_frost) lod = 3.0;
+            vec2 d = (gaussian_frost ? 6.0 : (frosted ? 5.0 : 3.2)) * sample_scale / extent;
             vec3 color = texture2D(backdrop, coord, lod).rgb * 0.25;
             color += (texture2D(backdrop, coord + vec2(d.x, 0.0), lod).rgb
                     + texture2D(backdrop, coord - vec2(d.x, 0.0), lod).rgb
@@ -113,9 +114,11 @@ void main() {
             bool text_surface = clear_mode > 3.5 && clear_mode < 5.5;
             float feather = text_surface ? 11.0 : 1.5;
             float alpha = glass_opacity * (1.0-smoothstep(0.975-feather/diameter, 0.975, edge));
-            if (window_frost) {
-                // Blur away recognizable desktop detail, then lift it with a muted gray veil.
-                color = mix(color, vec3(0.76), 0.32);
+            if (gaussian_frost) {
+                // Blur away detail and lift light surroundings enough for dark control ink.
+                float veil = glass_tone > 0.5 ? 0.91 : 0.76;
+                float veil_mix = glass_tone > 0.5 ? 0.64 : 0.32;
+                color = mix(color, vec3(veil), veil_mix);
             } else if (text_surface) {
                 color = mix(color, vec3(clear_mode > 4.5 ? 0.97 : 0.12), 0.68);
             } else {

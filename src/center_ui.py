@@ -31,7 +31,12 @@ def dark_mode(theme):
     )
 
 
-UI_VERSIONS = {'v1': 'V1 · Sólido', 'v2': 'V2 · Vidrio difuminado', 'v3': 'V3 · Vidrio transparente'}
+UI_VERSIONS = {
+    'v1': 'V1 · Sólido',
+    'v2': 'V2 · Vidrio difuminado',
+    'v3': 'V3 · Liquid Glass',
+    'v4': 'V4 · Gaussian blur',
+}
 V3_CONTROL_RADIUS = 11
 APP_CARD_IDENTITY_RADIUS = 12
 

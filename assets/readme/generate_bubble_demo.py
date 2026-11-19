@@ -7,8 +7,8 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QApplication
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,37 +78,52 @@ def render_bubble(app, image, motion):
 def main():
     app = QApplication.instance() or QApplication([])
     source = backdrop()
-    resting = render_bubble(app, source, QPointF())
     moving = render_bubble(app, source, QPointF(.8, -.45))
 
-    canvas = QImage(1200, 700, QImage.Format.Format_ARGB32_Premultiplied)
-    canvas.fill(QColor('#171615'))
+    canvas = QImage(1280, 760, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas.fill(QColor('#15171c'))
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(QColor('#d99a78'))
     painter.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
-    painter.drawText(62, 58, 'CAPTURA DEL SHADER OPENGL · FONDO SINTÉTICO')
+    painter.drawText(62, 64, 'LIQUID GLASS · SHADER OPENGL REAL')
     painter.setPen(QColor('#f3eee6'))
-    painter.setFont(QFont('Segoe UI', 29, QFont.Weight.DemiBold))
-    painter.drawText(62, 103, 'La burbuja refracta lo que hay detrás.')
+    painter.setFont(QFont('Segoe UI', 31, QFont.Weight.DemiBold))
+    painter.drawText(62, 111, 'Una lente que dobla el fondo.')
 
-    for x, title, frame in ((60, 'En reposo', resting), (620, 'Mientras se mueve', moving)):
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor('#292725'))
-        painter.drawRoundedRect(x, 142, 520, 478, 22, 22)
-        painter.setPen(QPen(QColor(255, 255, 255, 34), 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(x + .5, 142.5, 519, 477, 22, 22)
-        area = x + 60
-        painter.drawImage(area, 166, source)
-        painter.drawImage(area, 166, frame)
-        painter.setPen(QColor('#f3eee6'))
-        painter.setFont(QFont('Segoe UI', 16, QFont.Weight.DemiBold))
-        painter.drawText(x + 24, 599, title)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor('#202329'))
+    painter.drawRoundedRect(43, 136, 600, 600, 24, 24)
+    painter.setPen(QPen(QColor(255, 255, 255, 38), 1))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(QRectF(43.5, 136.5, 599, 599), 24, 24)
+    painter.drawImage(QRectF(63, 156, 560, 560), source)
+    painter.drawImage(QRectF(63, 156, 560, 560), moving)
 
+    painter.setPen(QColor('#d99a78'))
+    painter.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+    painter.drawText(710, 225, 'EN DESPLAZAMIENTO')
+    painter.setPen(QColor('#f3eee6'))
+    painter.setFont(QFont('Segoe UI', 31, QFont.Weight.DemiBold))
+    painter.drawText(QRectF(710, 257, 500, 150),
+                     Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+                     'La refracción acompaña el movimiento.')
+    painter.setPen(QColor('#c6c2bd'))
+    painter.setFont(QFont('Segoe UI', 16))
+    painter.drawText(QRectF(710, 425, 470, 115),
+                     Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+                     'Un único fotograma del shader de Cicerón. Las líneas y formas dejan ver cómo el vidrio deforma lo que pasa detrás.')
+    painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
+    painter.drawLine(710, 565, 1190, 565)
+    painter.setPen(QColor('#f3eee6'))
+    painter.setFont(QFont('Segoe UI', 13, QFont.Weight.DemiBold))
+    painter.drawText(710, 601, 'FONDO SINTÉTICO')
     painter.setPen(QColor('#aaa39a'))
-    painter.setFont(QFont('Segoe UI', 11))
-    painter.drawText(62, 666, 'La imagen se genera desde src/gpu_lens.py. No captura ni publica el escritorio del usuario.')
+    painter.setFont(QFont('Segoe UI', 12))
+    painter.drawText(QRectF(710, 612, 460, 60),
+                     Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+                     'No captura ni publica contenido del escritorio personal.')
+
     painter.end()
 
     destination = ROOT / 'assets' / 'readme' / 'liquid-glass-bubble.png'

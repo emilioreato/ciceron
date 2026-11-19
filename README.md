@@ -12,7 +12,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/readme/liquid-glass-bubble.png" alt="Captura del shader real de la burbuja Liquid Glass de Cicerón, en reposo y en movimiento" width="100%">
+  <img src="assets/readme/liquid-glass-bubble.png" alt="Una captura amplia del shader Liquid Glass de Cicerón deformando la escena" width="100%">
 </p>
 
 <p align="center"><sub>Captura real del render OpenGL de Cicerón sobre un fondo de prueba. La escena sintética deja ver la refracción sin incluir contenido del escritorio personal.</sub></p>
@@ -21,13 +21,30 @@
 
 Cicerón mantiene accesibles tus aplicaciones y herramientas sin ocupar el escritorio cuando no las usas. Una pequeña burbuja en el borde abre la barra; desde allí puedes entrar al centro, abrir tus miniapps o usar el Timer.
 
-<h3 align="center">De la burbuja al panel</h3>
+<h3 align="center">Cicerón por dentro</h3>
 
-<p align="center">
-  <img src="assets/readme/liquid-glass-flow.svg" alt="Esquema del flujo: la burbuja en reposo, la barra desplegada y el panel abierto" width="100%">
-</p>
+<table>
+  <tr>
+    <td align="center"><strong>Centro · V2</strong><br><img src="assets/readme/ui/general-v2.png" alt="Centro de Cicerón en V2" width="100%"></td>
+    <td align="center"><strong>Centro · V3 Liquid Glass</strong><br><img src="assets/readme/ui/general-v3.png" alt="Centro de Cicerón en V3 Liquid Glass" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Centro · V4 Gaussian blur</strong><br><img src="assets/readme/ui/general-v4.png" alt="Centro de Cicerón en V4 Gaussian blur" width="100%"></td>
+    <td align="center"><strong>Ajustes</strong><br><img src="assets/readme/ui/settings-v2.png" alt="Ajustes de Cicerón en V2" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Timer</strong><br><img src="assets/readme/ui/timer-v2.png" alt="Timer de Cicerón" width="100%"></td>
+    <td align="center"><strong>Efectos de escritorio</strong><br><img src="assets/readme/ui/effects-v3.png" alt="Panel de efectos de escritorio en V3" width="100%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><strong>Bloqueo web</strong><br><img src="assets/readme/ui/web-block-v3.png" alt="Panel de bloqueo web en V3" width="100%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><strong>Almanaque</strong><br><img src="assets/readme/ui/annual-calendar.png" alt="Almanaque anual de Cicerón" width="100%"></td>
+  </tr>
+</table>
 
-<p align="center"><sub>Este esquema explica el recorrido. La imagen superior muestra el render real del shader.</sub></p>
+<p align="center"><sub>Ocho vistas del centro, las versiones de vidrio y sus herramientas. Las pantallas usan datos y fondos sintéticos de demostración.</sub></p>
 
 | Herramienta | Para qué sirve |
 | --- | --- |
@@ -53,12 +70,15 @@ Para ejecutar desde el código con un perfil separado de la instalación diaria:
 scripts\Ejecutar en desarrollo.bat
 ```
 
-La demo de arriba se puede regenerar en Windows con GPU y el entorno del proyecto:
+Las imágenes de demostración se pueden regenerar en Windows con el entorno del proyecto:
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'windows'
 .venv\Scripts\python.exe assets\readme\generate_bubble_demo.py
+.venv\Scripts\python.exe assets\readme\generate_ui_demo.py
 ```
+
+El generador de la burbuja necesita una GPU compatible con OpenGL. El generador de la galería renderiza los widgets de Cicerón sobre fondos sintéticos y no captura el escritorio.
 
 Las instrucciones para probar, actualizar, mover la instalación y añadir miniapps están en estas guías:
 

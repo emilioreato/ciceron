@@ -532,7 +532,8 @@ class App:
         monochrome = ui_version == 'v1'
         self.window.monochrome = monochrome
         self.window.dark = False if monochrome else dark_mode(self.cfg['theme'])
-        self.window.glass = ui_version == 'v3' or (ui_version == 'v2' and bool(self.cfg['glass']))
+        pure_versions = ('v3', 'v4')
+        self.window.glass = ui_version in pure_versions or (ui_version == 'v2' and bool(self.cfg['glass']))
         for frame, _ in self.builtin_cards:
             key = frame.objectName().removesuffix('Card')
             frame.findChild(AppCardIdentity).set_icon(tool_icon(
@@ -540,7 +541,8 @@ class App:
                 light_background=not (self.window.glass or self.window.dark)))
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
-        pure = ui_version == 'v3' and self.window.glass
+        pure = ui_version in pure_versions and self.window.glass
+        QApplication.instance().setProperty('ciceronUIVersion', ui_version)
         QApplication.instance().setProperty('pureGlass', pure)
         if self.dock is not None:
             self.dock.pure = pure
@@ -560,7 +562,8 @@ class App:
             self.glass_control.setEnabled(ui_version == 'v2')
             self.glass_control.setToolTip(
                 'V1 es opaco y no utiliza Liquid Glass.' if monochrome else
-                'V3 utiliza siempre Liquid Glass.' if ui_version == 'v3' else
+                'V3 mantiene Liquid Glass y difumina sus controles.' if ui_version == 'v3' else
+                'V4 aplica Gaussian blur a toda la superficie.' if ui_version == 'v4' else
                 'Activa o desactiva Liquid Glass en esta versión.')
             self.glass_control.blockSignals(blocked)
             self.clarity_control.setEnabled(ui_version == 'v2' and self.window.glass)
@@ -865,7 +868,8 @@ class App:
         self.wheel_filter.remember_foreground()
         self.select_page(key)
         self.show_edge_dock()
-        if self.dock.screen:
+        screen = self.dock.current_screen()
+        if screen is not None:
             if self.dock.pending_panel is not None and self.dock.pending_panel[0] == 'settings':
                 return
             if self.dock.panel is None or self.dock.panel.key != 'settings':
@@ -926,17 +930,31 @@ class App:
             self.show_edge_dock()
             self.dock.reveal()
 
+    def restart_edge_dock(self):
+        """Recreate only the sidebar and its native interaction state."""
+        dock = self.dock
+        if dock is None:
+            return
+        dock.shutdown()
+        dock.deleteLater()
+        self.dock = None
+        self.dock_signature = None
+        self.create_edge_dock()
+
+    def create_edge_dock(self):
+        from edge_dock import EdgeDock
+        self.dock = EdgeDock(icon(), self.toggle_settings_panel, tray_geometry=self.tray.geometry)
+        QApplication.instance().aboutToQuit.connect(self.dock.shutdown)
+
     def show(self):
         self.show_edge_dock()
         self.dock.reveal()
 
     def show_edge_dock(self):
         if self.dock is None:
-            from edge_dock import EdgeDock
-            self.dock = EdgeDock(icon(), self.toggle_settings_panel, tray_geometry=self.tray.geometry)
-            QApplication.instance().aboutToQuit.connect(self.dock.shutdown)
+            self.create_edge_dock()
         elif not self.dock.isVisible():
-            self.dock.reset_for_reopen()
+            self.restart_edge_dock()
         self.dock.pure = bool(QApplication.instance().property('pureGlass'))
         self.dock.theme_dark = self.window.dark
         self.dock.monochrome = self.window.monochrome
@@ -1311,8 +1329,10 @@ class App:
 
     def visual_playground(self):
         dialog = VisualDialog(self.window, dock_provider=lambda: self.dock)
-        if self.dock is not None and self.dock.isVisible() and self.dock.screen:
-            area = self.dock.screen.availableGeometry()
+        screen = (self.dock.current_screen() if self.dock is not None and self.dock.isVisible()
+                  else None)
+        if screen is not None:
+            area = screen.availableGeometry()
             dialog.move(max(area.x(), area.right() - self.dock.WIDTH - dialog.width() - 12),
                         area.center().y() - dialog.height() // 2)
         dialog.exec()

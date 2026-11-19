@@ -6,12 +6,12 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPlainTextEdit,
+    QApplication, QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPlainTextEdit,
     QPushButton, QStyle, QStyleOptionButton, QWidget
 )
 
 from center_ui import APP_CARD_IDENTITY_RADIUS, AppCardIdentity, V3_CONTROL_RADIUS
-from gpu_lens import (CLEAR_MODE_FROSTED_WINDOW, EDGE_OPTICS, VERTEX,
+from gpu_lens import (CLEAR_MODE_GAUSSIAN_FROST, CLEAR_MODE_LIQUID_GLASS, EDGE_OPTICS, VERTEX,
                       backdrop_is_dark, backdrop_is_light,
                       compile_lens, paint_optic)
 from lens_capture import WindowBackdropCapture
@@ -114,6 +114,10 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                         provisional=(0.0, 0.0, 0.0, 0.0)):
     """Draw the panel and its visible native controls from one desktop texture."""
     owner = layer.parentWidget()
+    app = QApplication.instance()
+    ui_version = app.property('ciceronUIVersion') if app is not None else ''
+    v3_controls = ui_version == 'v3'
+    v4_window = ui_version == 'v4'
     width, height = layer.width(), layer.height()
     sx, sy = physical[0] / rect.width(), physical[1] / rect.height()
     viewport = GL.glGetIntegerv(GL.GL_VIEWPORT)
@@ -136,7 +140,8 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                     panel_radius=min(corner*sx, w*sx/2, h*sy/2),
                     clear_mode=mode, glass_tone=float(light), glass_opacity=opacity,
                     glass_mix=glass_mix, provisional=provisional)
-    draw(rect, radius, CLEAR_MODE_FROSTED_WINDOW)
+    window_mode = CLEAR_MODE_GAUSSIAN_FROST if v4_window else CLEAR_MODE_LIQUID_GLASS
+    draw(rect, radius, window_mode)
     if not controls:
         return
     GL.glEnable(GL.GL_SCISSOR_TEST)
@@ -155,10 +160,11 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 continue
             grouped = isinstance(widget, AppCardIdentity)
             is_label = isinstance(widget, (QLabel, QCheckBox))
+            checkbox_control = isinstance(widget, QCheckBox) and v3_controls
             if is_label and isinstance(widget.parentWidget(), AppCardIdentity):
                 continue
-            is_text = grouped or is_label
-            area = glass_text_rect(widget) if is_label else widget.rect()
+            is_text = grouped or (is_label and not checkbox_control)
+            area = glass_text_rect(widget) if is_label and not checkbox_control else widget.rect()
             if area.isEmpty():
                 continue
             area.translate(widget.mapTo(owner, QPoint()))
@@ -175,7 +181,8 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 text_surfaces.append((area, clip, APP_CARD_IDENTITY_RADIUS if grouped else 12))
                 continue
             scissor(clip)
-            draw(QRectF(area), V3_CONTROL_RADIUS, 3 if frost else 2)
+            control_mode = CLEAR_MODE_GAUSSIAN_FROST if v3_controls else (3 if frost else 2)
+            draw(QRectF(area), V3_CONTROL_RADIUS, control_mode)
         for area, clip, corner in text_surfaces:
             scissor(clip)
             draw(QRectF(area), corner, 5 if light else 4)

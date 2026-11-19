@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer
+from PySide6.QtWidgets import QApplication
 
 from center_ui import GlassDialog, clear_styles, dark_mode, panel, stylesheet
 
@@ -37,12 +38,14 @@ class MiniappDialog(GlassDialog):
             return
         version = preferences.get('ui_version', 'v2')
         classic = version == 'v1'
+        pure_version = version in ('v3', 'v4')
         configured_glass = bool(preferences.get('glass', True))
-        pure = version == 'v3' and configured_glass
+        pure = pure_version
         dark = not classic and dark_mode(preferences.get('theme', 'system'))
-        glass = not classic and configured_glass
+        glass = not classic and (configured_glass or pure_version)
         transparency = {'clear': .20, 'contrast': -.18}.get(preferences.get('clarity'), 0)
-        appearance = (classic, pure, dark, glass, transparency)
+        QApplication.instance().setProperty('ciceronUIVersion', version)
+        appearance = (version, classic, pure, dark, glass, transparency)
         if appearance == self.appearance:
             return
         self.appearance = appearance
@@ -54,7 +57,7 @@ class MiniappDialog(GlassDialog):
         self.update_style()
 
     def update_style(self):
-        classic, pure, dark, glass, _ = self.appearance
+        _, classic, pure, dark, glass, _ = self.appearance
         light = self.has_light_glass()
         style = stylesheet(dark and not light, glass, classic)
         dark_list = (dark or pure) and not light

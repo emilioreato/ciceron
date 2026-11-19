@@ -23,7 +23,7 @@ PORTABLE_PREFERENCES = {
     'interval': lambda v: type(v) is int and 1 <= v <= 86400,
     'theme': lambda v: v in ('system', 'light', 'dark'),
     'clarity': lambda v: v in ('clear', 'balanced', 'contrast'),
-    'ui_version': lambda v: v in ('v1', 'v2', 'v3'),
+    'ui_version': lambda v: v in ('v1', 'v2', 'v3', 'v4'),
 }
 PORTABLE_PREFERENCES.update(dict.fromkeys(
     ('show_timer', 'guardian', 'topmost', 'glass', 'open_center_on_start', 'dock_motion', 'include_in_captures'),

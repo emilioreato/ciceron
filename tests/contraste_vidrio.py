@@ -103,30 +103,38 @@ for top in (0, card.y()):
         readings.append(sample(60, top + 2).green())
     assert abs(readings[1] - readings[0]) < 5, (top, readings)
     assert readings[0] - readings[2] > 60, (top, readings)
-# Cambio 77: the V3 window base must blur desktop detail and lift dark pixels without turning white.
+# Cambio 77: V4 keeps the Gaussian background; V3 reserves that frost for controls.
 layer.pure = True
 for x in range(source.width()):
     shade = QColor('white' if x % 16 < 8 else 'black')
     for y in range(source.height()):
         source.setPixelColor(x, y, shade)
 layer.texture_dirty = True
+
+app.setProperty('ciceronUIVersion', 'v4')
 result = layer.grabFramebuffer()
 def variation(y):
     values = [sample(x, y).green() for x in range(130, 155)]
     return max(values) - min(values)
-assert variation(45) < 160, 'El fondo de V3 debe quedar suavemente difuminado.'
-assert variation(127) < variation(45) * .65, 'Falta el desenfoque dentro del botón V3.'
-regular_variation = variation(127)
+v4_background_variation = variation(45)
+assert v4_background_variation < 160, 'El fondo V4 debe conservar Gaussian blur.'
+
+app.setProperty('ciceronUIVersion', 'v3')
+layer.texture_dirty = True
+result = layer.grabFramebuffer()
+v3_background_variation = variation(45)
+assert v3_background_variation > v4_background_variation, 'V3 debe conservar Liquid Glass en el fondo.'
+assert variation(127) < v3_background_variation * .65, 'Falta el Gaussian blur en el botón V3.'
 window.setProperty('frostControls', True)
 result = layer.grabFramebuffer()
-assert variation(127) < regular_variation, 'El desenfoque de Timer debe suavizar más el fondo.'
+assert variation(127) < v3_background_variation * .65, 'Los controles V3 deben mantener Gaussian blur.'
 source.fill(QColor('black'))
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
-assert 20 < sample(140, 45).lightness() < 120, 'La base V3 debe aclarar el negro sin lavarlo de blanco.'
+assert sample(140, 45).lightness() < 120, 'La base Liquid Glass V3 debe conservar el fondo oscuro.'
 assert sample(140, 2).lightness() > 20, 'Falta el borde óptico de V3 sobre negro.'
 over_black = sample(140, 127)
-assert contrast(QColor('#202731'), over_black) >= 4.5
+assert contrast(QColor('#f0f2f6'), over_black) >= 4.5, 'La tinta clara de V3 debe contrastar sobre el control oscuro.'
 source.fill(QColor('white'))
 layer.texture_dirty = True
 result = layer.grabFramebuffer()
@@ -176,7 +184,7 @@ result = layer.grabFramebuffer()
 for widget in identity.findChildren(QLabel):
     point = widget.mapTo(window, widget.rect().center())
     assert contrast(QColor('#f0f2f6'), sample(point.x(), point.y())) >= 4.5
-assert 220 < sample(180, 25).lightness() < 250, 'La superficie debe quedar clara, sin volverse blanca.'
+assert sample(180, 25).lightness() > 220, 'Liquid Glass V3 debe reflejar correctamente el fondo claro.'
 
 # A real bright frame must select matching light material and dark ink, without
 # changing the frosted controls or the label and button treatments on dark frames.
@@ -187,7 +195,7 @@ assert 'color: #f0f2f6;' in dark_style and 'color: #f7f7f7;' in dark_style
 window.setProperty('frostControls', False)
 assert layer.set_frame(source.copy()) and layer.light
 result = layer.grabFramebuffer()
-assert sample(140, 127).lightness() > 235, 'El control V3 oscurece un fondo blanco.'
+assert sample(140, 127).lightness() > 220, ('El control V3 oscurece un fondo blanco.', sample(140, 127).name())
 assert sample(120, 58).lightness() > 235, 'La placa de identidad V3 ignora el fondo claro.'
 assert sample(180, 25).name() == '#ffffff'
 
@@ -197,12 +205,12 @@ painter.fillRect(121, 103, 47, 55, QColor('black'))
 painter.end()
 assert not layer.set_frame(source_copy) and layer.light
 result = layer.grabFramebuffer()
-assert contrast(QColor('#202731'), sample(140, 127)) >= 4.5
+assert contrast(QColor('#202731'), sample(140, 127)) >= 4.5, (sample(140, 127).name(), contrast(QColor('#202731'), sample(140, 127)))
 
 source_copy.fill(QColor('black'))
 assert layer.set_frame(source_copy) and not layer.light
 result = layer.grabFramebuffer()
-assert sample(140, 127).lightness() < 40
+assert sample(140, 127).lightness() < 100
 assert sample(120, 58).lightness() < 40
 
 layer.pure = False

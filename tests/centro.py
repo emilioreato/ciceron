@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from PySide6.QtCore import QEvent, QPoint, QPointF, QSize
 from PySide6.QtGui import QEnterEvent, QKeyEvent, QWheelEvent
@@ -619,7 +620,43 @@ with TemporaryDirectory() as temporary:
         assert panel.resize_target() is None and not panel.resize_wait_timer.isActive()
     panel.close()
     dock.reset_to_handle()
+    if dock.panel is not None:
+        dock.panel.close()
+    dock.cancel_pending_panel()
+    dock.reset_to_handle()
     dock.set_glass(True)
+    from birthday_host import agenda_module
+    birthday_ui = agenda_module()
+    birthday_path = Path(temporary) / 'birthday' / 'cumpleanos.json'
+    birthday_path.parent.mkdir(parents=True, exist_ok=True)
+    birthday_host = SimpleNamespace(center=SimpleNamespace(window=center.window),
+                                    calendar_days=lambda _year: {})
+    content = birthday_ui.Agenda(birthday_path, birthday_ui.load(birthday_path), birthday_host)
+    content.setProperty('restartState', 'kept')
+    dock.motion_enabled = False
+    dock.progress = 1.0
+    dock.toggle_panel('emilioreato.happy-birthday', lambda: content, persistent=True)
+    assert dock.panel is not None and dock.panel.content is content
+    content.open_year()
+    app.processEvents()
+    calendar = content.year_dialog
+    assert calendar is not None and calendar.isVisible()
+    calendar.accept()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert content.year_dialog is None
+    dock.panel.close()
+    dock.reset_to_handle()
+    dock.progress = 1.0
+    dock.toggle_panel('emilioreato.happy-birthday', lambda: content, persistent=True)
+    content.open_year()
+    app.processEvents()
+    calendar = content.year_dialog
+    assert calendar is not None and calendar.isVisible()
+    calendar.accept()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert content.year_dialog is None and dock.panel.content is content
     dock.motion_enabled = True
     dock.animation.start(1000)
     dock.capture_timer.start(1000)
@@ -627,6 +664,7 @@ with TemporaryDirectory() as temporary:
     center.toggle_edge_dock_visibility()
     assert not dock.isVisible()
     assert dock.progress == 0.0 and dock.panel is None and dock.backdrop is None
+    assert content.parentWidget() is None and content.property('restartState') == 'kept'
     assert not any(timer.isActive() for timer in
                    (dock.animation, dock.hover_timer, dock.hover_probe, dock.pending_open_timer,
                     dock.capture_timer, dock.glass_timer))
@@ -639,18 +677,32 @@ with TemporaryDirectory() as temporary:
     dock.pending_panel = ('clock', Mock(), False)
     dock.pending_open_timer.start(1000)
     dock.panel_mouse_press.receiver = 123
-    with patch.object(dock, 'reveal') as reveal:
+    old_dock = dock
+    with patch.object(type(dock), 'reveal') as reveal:
         center.dock_visibility_action.trigger()
     reveal.assert_called_once()
+    dock = center.dock
+    assert dock is not old_dock and not old_dock.isVisible()
     assert dock.isVisible() and dock.handle.isVisible() and dock.progress == 0.0
     assert dock.transition_to == 0.0 and dock.layer.frame is None and dock.layer.light is None
     assert dock.pending_panel is None and dock.panel_mouse_press.receiver is None
+    assert old_dock.pending_panel is None and old_dock.panel_mouse_press.receiver is None
     assert not any(timer.isActive() for timer in
                    (dock.animation, dock.hover_timer, dock.pending_open_timer, dock.capture_timer,
                     dock.glass_timer, dock.glass_idle_timer))
+    dock.motion_enabled = False
+    dock.progress = 1.0
+    dock.toggle_panel('restart-test', lambda: content, persistent=True)
+    assert dock.panel is not None and dock.panel.content is content
+    assert content.property('restartState') == 'kept'
+    dock.panel.close()
+    assert content.parentWidget() is None
+    dock.reset_to_handle()
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.dock.close()
+    content.reminders.stop()
+    content.deleteLater()
     center.window.close()
     center.tray.hide()
     center.count.close()

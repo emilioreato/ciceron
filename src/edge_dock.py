@@ -803,7 +803,14 @@ class EdgeDock(QWidget):
         self.change_screen(QApplication.primaryScreen())
 
     def change_screen(self, screen):
-        if self.screen:
+        if not self.set_screen(screen):
+            return
+        self.position_on_edge()
+
+    def set_screen(self, screen):
+        if self.screen is screen:
+            return False
+        if self.screen is not None:
             for signal in ('availableGeometryChanged', 'geometryChanged'):
                 try:
                     getattr(self.screen, signal).disconnect(self.position_on_edge)
@@ -813,7 +820,19 @@ class EdgeDock(QWidget):
         if screen:
             screen.availableGeometryChanged.connect(self.position_on_edge)
             screen.geometryChanged.connect(self.position_on_edge)
-        self.position_on_edge()
+        return True
+
+    def current_screen(self):
+        try:
+            if self.screen is not None:
+                self.screen.availableGeometry()
+                return self.screen
+        except RuntimeError:
+            self.screen = None
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            self.set_screen(screen)
+        return screen
 
     def set_entries(self, entries):
         for button in self.entries:
@@ -825,9 +844,10 @@ class EdgeDock(QWidget):
         self.position_on_edge()
 
     def position_on_edge(self, *_):
-        if not self.screen:
+        screen = self.current_screen()
+        if screen is None:
             return
-        area = self.screen.availableGeometry()
+        area = screen.availableGeometry()
         self.capacity = max(1, min(len(self.entries), (area.height() - 24) // self.STEP - 1))
         height = (self.capacity + 1) * self.STEP + 16
         self.setGeometry(area.right() + 1 - self.WIDTH, area.center().y() - height // 2, self.WIDTH, height)
@@ -947,7 +967,15 @@ class EdgeDock(QWidget):
     def shutdown(self):
         capture = self.backdrop
         self.close()
+        for timer in (self.animation, self.hover_timer, self.hover_probe, self.pending_open_timer,
+                      self.capture_timer, self.glass_timer, self.glass_idle_timer):
+            timer.stop()
+        if self.panel is not None:
+            self.panel.close()
         self.panel_mouse_press.stop()
+        self.cancel_pending_panel()
+        self.stop_capture()
+        self.layer.hide()
         if capture is not None:
             capture.thread.join(timeout=2)
         if self.panel_window is not None:
@@ -1343,9 +1371,10 @@ class EdgeDock(QWidget):
             panel.finish_resize()
 
     def panel_geometry(self, panel, height, keep_top=False):
-        if not self.screen:
+        screen = self.current_screen()
+        if screen is None:
             return panel.geometry()
-        area = self.screen.availableGeometry()
+        area = screen.availableGeometry()
         anchors = dict(zip(('clock', 'browser', 'effects'), self.entries))
         anchor = anchors.get(panel.key, self.gear)
         seam = self.x() + round(self.optic_rect().left()) + panel.INSET - self.PANEL_GAP
