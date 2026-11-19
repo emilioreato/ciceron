@@ -4,7 +4,7 @@ import threading
 import time
 
 from PySide6.QtGui import QImage
-from windows_glass import BackdropCapture
+from windows_glass import BackdropCapture, client_bounds
 
 # comtypes initializes COM on its first importing thread and finalizes it at
 # process exit. Keep that lifetime on the UI thread; workers own separate apartments.
@@ -233,6 +233,50 @@ class DockBackdropCapture:
             for source in sources:
                 source.close()
             lens_gdi.close()
+
+
+class WindowBackdropCapture:
+    """Capture a live glass window away from Qt's UI thread."""
+    def __init__(self):
+        self.request = None
+        self.latest = None
+        self.error = None
+        self.wake = threading.Event()
+        self.closed = threading.Event()
+        self.thread = threading.Thread(target=self.run, name='Ciceron-Ventana', daemon=True)
+        self.thread.start()
+
+    def submit(self, hwnd):
+        if not self.closed.is_set():
+            self.request = int(hwnd)
+            self.wake.set()
+
+    def close(self):
+        self.closed.set()
+        self.wake.set()
+
+    def run(self):
+        capture = BackdropCapture()
+        try:
+            while not self.closed.is_set():
+                self.wake.wait()
+                self.wake.clear()
+                if self.closed.is_set():
+                    break
+                hwnd = self.request
+                if hwnd is None:
+                    continue
+                bounds = client_bounds(hwnd)
+                if bounds is None:
+                    continue
+                frame = capture.capture_region(bounds)
+                if (not self.closed.is_set() and hwnd == self.request and
+                        frame is not None and not frame.isNull()):
+                    self.latest = (hwnd, bounds, frame)
+        except Exception as error:
+            self.error = str(error) or type(error).__name__
+        finally:
+            capture.close()
 
 
 class LensCapture:

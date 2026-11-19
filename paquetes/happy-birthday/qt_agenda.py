@@ -7,12 +7,13 @@ from html import escape
 from pathlib import Path
 import time
 
-from PySide6.QtCore import QEasingCurve, QEvent, QLocale, QPoint, QPropertyAnimation, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import (QEasingCurve, QEvent, QItemSelectionModel, QLocale, QPoint,
+                            QPropertyAnimation, QRect, QSize, Qt, QTimer)
 from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QFileDialog, QFrame, QHeaderView,
-                               QGridLayout, QHBoxLayout,
-                               QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
+                               QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget,
+                               QListWidgetItem, QMenu, QMessageBox, QPushButton, QTableWidget,
+                               QTableWidgetItem, QToolTip, QVBoxLayout, QWidget)
 
 from miniapp_ui import MiniappDialog, panel, stylesheet
 if __package__:
@@ -42,23 +43,64 @@ def action(layout, text, callback, role=''):
 class BirthdayList(QListWidget):
     def __init__(self):
         super().__init__()
-        self.setViewMode(QListView.ViewMode.IconMode)
-        self.setFlow(QListView.Flow.LeftToRight)
-        self.setWrapping(True)
+        self.setViewMode(QListView.ViewMode.ListMode)
+        self.setFlow(QListView.Flow.TopToBottom)
+        self.setWrapping(False)
         self.setMovement(QListView.Movement.Static)
         self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setUniformItemSizes(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setStyleSheet("""
             QListWidget { border-radius: 11px; padding: 5px 6px 7px; font-size: 12px; }
             QListWidget::item { min-height: 20px; padding: 2px 5px; border-radius: 6px; }
         """)
 
-    def resizeEvent(self, event):
-        width = self.viewport().width()
-        columns = 2 if width >= 420 else 1
-        self.setGridSize(QSize(max(1, (width - 4) // columns), 27))
-        super().resizeEvent(event)
+
+class BirthdayRow(QWidget):
+    def __init__(self, rows, item, text, on_delete, on_edit):
+        super().__init__(rows)
+        self.rows, self.item = rows, item
+        self.on_edit = on_edit
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 0, 4, 0)
+        layout.setSpacing(6)
+        self.label = QLabel(text)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout.addWidget(self.label, 1)
+        self.remove = QPushButton('×')
+        self.remove.setObjectName('birthdayRemove')
+        self.remove.setAccessibleName(f'Eliminar {text}')
+        self.remove.setToolTip('Eliminar este cumpleaños')
+        self.remove.setFixedSize(23, 23)
+        self.remove.setStyleSheet("""
+            QPushButton#birthdayRemove {
+                color: #d94848; font-size: 18px; font-weight: 700;
+                border: none; border-radius: 6px; padding: 0; background: transparent;
+            }
+            QPushButton#birthdayRemove:hover { background: rgba(217, 72, 72, 28); }
+        """)
+        self.remove.clicked.connect(on_delete)
+        self.remove.hide()
+        layout.addWidget(self.remove)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.rows.setCurrentItem(self.item, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.rows.setCurrentItem(self.item, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            self.on_edit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class Agenda(MiniappDialog):
@@ -104,28 +146,35 @@ class Agenda(MiniappDialog):
         more.setMenu(menu)
         layout.addLayout(header)
 
-        layout.addWidget(panel('heading', 'Nuevo cumpleaños'))
+        form_heading = QHBoxLayout()
+        form_heading.addWidget(panel('heading', 'Nuevo cumpleaños'))
+        form_heading.addStretch()
+        self.feedback = panel('muted', '')
+        self.feedback.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.feedback.setWordWrap(True)
+        self.feedback.setMinimumWidth(0)
+        self.feedback.setMaximumWidth(190)
+        self.feedback.setToolTip('')
+        form_heading.addWidget(self.feedback)
+        layout.addLayout(form_heading)
         form = QHBoxLayout()
-        self.day = QLineEdit(placeholderText='Fecha')
+        self.day = QLineEdit(placeholderText='Ej. 8-9-2004')
         self.day.setAccessibleName('Fecha de cumpleaños')
-        self.day.setToolTip('Día, mes y año. El año puede quedar en blanco.')
-        self.name = QLineEdit(placeholderText='Nombre')
+        self.day.setToolTip('Día-mes-año o día-mes. También acepta barras, puntos o espacios.')
+        self.name = QLineEdit(placeholderText='Ej. Gabriel')
         self.name.setAccessibleName('Nombre')
         for field in (self.day, self.name):
             field.setStyleSheet('QLineEdit { placeholder-text-color: rgba(120,120,120,205); }')
         form.addWidget(self.day, 3)
         form.addWidget(self.name, 3)
         self.submit_button = action(form, 'Añadir', self.submit, 'primary')
-        self.cancel_button = action(form, 'Cancelar', self.clear_form)
-        self.cancel_button.hide()
         layout.addLayout(form)
-        self.feedback = panel('muted', '')
-        self.feedback.setWordWrap(True)
         self.feedback.hide()
-        layout.addWidget(self.feedback)
+        self.feedback_timer = QTimer(self, singleShot=True)
+        self.feedback_timer.timeout.connect(lambda: self.set_feedback(''))
 
         layout.addWidget(panel('heading', 'Próximos cumpleaños'))
-        self.search = QLineEdit(placeholderText='Buscar cumpleaños')
+        self.search = QLineEdit()
         self.search.setAccessibleName('Buscar cumpleaños')
         layout.addWidget(self.search)
         self.rows = BirthdayList()
@@ -134,11 +183,6 @@ class Agenda(MiniappDialog):
         layout.addWidget(self.rows, 1)
         self.empty = panel('muted', '')
         layout.addWidget(self.empty)
-        row = QHBoxLayout()
-        row.addStretch()
-        self.edit_button = action(row, 'Editar', self.edit_selected)
-        self.delete_button = action(row, 'Borrar', self.delete_selected, 'destructive')
-        layout.addLayout(row)
         self.rows.currentItemChanged.connect(lambda *_: self.update_actions())
         self.search.textChanged.connect(self.render)
         self.day.returnPressed.connect(self.submit)
@@ -162,9 +206,13 @@ class Agenda(MiniappDialog):
     def state(self):
         return 'normal' if self.isVisible() else 'withdrawn'
 
-    def set_feedback(self, text):
+    def set_feedback(self, text, *, timeout=0):
+        self.feedback_timer.stop()
         self.feedback.setText(text)
+        self.feedback.setToolTip(text)
         self.feedback.setVisible(bool(text))
+        if text and timeout > 0:
+            self.feedback_timer.start(timeout)
 
     def commit(self, state):
         try:
@@ -186,9 +234,12 @@ class Agenda(MiniappDialog):
         return row.data(Qt.ItemDataRole.UserRole) if row else None
 
     def update_actions(self):
-        enabled = self.selected() is not None
-        self.edit_button.setEnabled(enabled)
-        self.delete_button.setEnabled(enabled)
+        current = self.rows.currentItem()
+        for index in range(self.rows.count()):
+            item = self.rows.item(index)
+            row = self.rows.itemWidget(item)
+            if isinstance(row, BirthdayRow):
+                row.remove.setVisible(item is current)
 
     def render(self):
         self.rows.clear()
@@ -200,11 +251,21 @@ class Agenda(MiniappDialog):
             upcoming_day = birthday.next_date(today)
             age = birthday.upcoming_age(upcoming_day)
             age_label = f' · {age} años' if age is not None else ''
-            row = QListWidgetItem(f'{birthday.label}   ·   {upcoming_day:%d-%m-%Y}{age_label}')
-            row.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            row.setToolTip(row.text())
+            row_text = f'{birthday.label}   ·   {upcoming_day:%d-%m-%Y}{age_label}'
+            row = QListWidgetItem()
+            row.setToolTip(row_text)
+            row.setData(Qt.ItemDataRole.AccessibleTextRole, row_text)
             row.setData(Qt.ItemDataRole.UserRole, birthday)
+            row.setSizeHint(QSize(0, 31))
             self.rows.addItem(row)
+            row_widget = BirthdayRow(
+                self.rows,
+                row,
+                row_text,
+                lambda checked=False, entry=birthday: self.delete_birthday(entry),
+                self.edit_selected,
+            )
+            self.rows.setItemWidget(row, row_widget)
         self.empty.setText('No hay resultados.' if needle else 'Todavía no hay cumpleaños guardados.')
         self.empty.setVisible(self.rows.count() == 0)
         self.rows.setVisible(self.rows.count() != 0)
@@ -215,7 +276,6 @@ class Agenda(MiniappDialog):
         self.day.clear()
         self.name.clear()
         self.submit_button.setText('Añadir')
-        self.cancel_button.hide()
         self.rows.setCurrentItem(None)
         self.rows.clearSelection()
         if focus:
@@ -228,6 +288,7 @@ class Agenda(MiniappDialog):
 
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
+        self.set_feedback('')
         if self.editing is not None or self.selected() is not None:
             self.clear_form(focus=False)
         super().hideEvent(event)
@@ -237,8 +298,7 @@ class Agenda(MiniappDialog):
             return False
         if self.editing is None and self.selected() is None:
             return False
-        controls = (self.day, self.name, self.submit_button, self.cancel_button,
-                    self.edit_button, self.delete_button)
+        controls = (self.day, self.name, self.submit_button)
         if any(widget is control or control.isAncestorOf(widget) for control in controls):
             return False
         if self.rows.isAncestorOf(widget) and self.editing is None:
@@ -262,7 +322,7 @@ class Agenda(MiniappDialog):
             return
         if self.commit(self.records.with_entries([*others, birthday])):
             self.clear_form()
-            self.set_feedback(f'Guardado · {birthday.short_date}')
+            self.set_feedback(f'Guardado · {birthday.short_date}', timeout=2800)
             self.render()
             self.check_reminders()
 
@@ -274,12 +334,8 @@ class Agenda(MiniappDialog):
             self.name.setText(birthday.name)
             self.name.setFocus()
             self.submit_button.setText('Guardar')
-            self.cancel_button.show()
 
-    def delete_selected(self):
-        birthday = self.selected()
-        if not birthday:
-            return
+    def delete_birthday(self, birthday):
         reply = QMessageBox.question(self, 'Borrar cumpleaños', f'¿Borrar {birthday.label}?',
                                      defaultButton=QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
@@ -454,10 +510,6 @@ class Year(QDialog):
             button.setAutoDefault(False)
         layout.addLayout(header)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         grid = QWidget()
         months = QGridLayout(grid)
         months.setContentsMargins(0, 0, 0, 0)
@@ -483,9 +535,9 @@ class Year(QDialog):
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             table.horizontalHeader().setMinimumSectionSize(15)
             table.verticalHeader().hide()
-            table.verticalHeader().setDefaultSectionSize(23)
-            table.verticalHeader().setMinimumSectionSize(23)
-            table.setFixedHeight(6 * 23 + 23)
+            table.verticalHeader().setDefaultSectionSize(18)
+            table.verticalHeader().setMinimumSectionSize(18)
+            table.setFixedHeight(6 * 18 + 23)
             table.setShowGrid(False)
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -496,8 +548,7 @@ class Year(QDialog):
             tile.addWidget(table)
             self.months.append(table)
             months.addLayout(tile, index // columns, index % columns)
-        scroll.setWidget(grid)
-        layout.addWidget(scroll, 1)
+        layout.addWidget(grid, 1)
         self.show_date(selected)
 
     def showEvent(self, event):

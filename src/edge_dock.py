@@ -15,7 +15,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (QAbstractScrollArea, QApplication, QDialog, QMenu, QScrollArea,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
-from gpu_lens import compile_lens, make_lens_texture, paint_optic
+from gpu_lens import backdrop_is_light, compile_lens, make_lens_texture, paint_optic
 from lens_capture import DockBackdropCapture
 from windows_glass import (PanelMousePress, client_bounds, energy_saver_active, foreground_window, forward_wheel,
                            is_external_window, root_window, apply_capture_affinity, capture_mode, window_belongs_to)
@@ -54,6 +54,24 @@ def tool_icon(name, *, light_background=False):
         path.moveTo(16, 10)
         path.lineTo(16, 16)
         path.lineTo(21, 18)
+    elif name == 'gift':
+        path.moveTo(6, 12)
+        path.lineTo(26, 12)
+        path.lineTo(26, 16)
+        path.lineTo(6, 16)
+        path.closeSubpath()
+        path.moveTo(8, 16)
+        path.lineTo(8, 26)
+        path.lineTo(24, 26)
+        path.lineTo(24, 16)
+        path.moveTo(16, 16)
+        path.lineTo(16, 26)
+        path.moveTo(16, 12)
+        path.cubicTo(13.3, 10.6, 8.6, 8.2, 9.4, 5.2)
+        path.cubicTo(10, 2.8, 13.2, 4.2, 16, 12)
+        path.moveTo(16, 12)
+        path.cubicTo(18.7, 10.6, 23.4, 8.2, 22.6, 5.2)
+        path.cubicTo(22, 2.8, 18.8, 4.2, 16, 12)
     else:
         path.addEllipse(QRectF(5, 5, 22, 22))
         path.addEllipse(QRectF(11, 5, 10, 22))
@@ -93,15 +111,27 @@ class DockIcon(QToolButton):
         size = round(min(self.width(), self.height()) * .68)
         if size > 0:
             area = QRect(round(center.x() - size / 2), round(center.y() - size / 2), size, size)
-            light = dock.layer.light if dock.using_glass else not (dock.theme_dark or dock.pure)
-            if dock.theme_dark and not dock.pure:
-                light = False
+            light = (dock.layer.light if dock.glass_enabled and dock.layer.light is not None else
+                     not (dock.theme_dark or dock.pure))
             icon = self.light_icon if light and self.light_icon is not None else self.icon()
             icon.paint(painter, area)
 
 
 class DockHandle(QToolButton):
-    ARROW_RIGHT_INSET = 6
+    ARROW_RIGHT_INSET = 5
+    HIT_WIDTH = 18
+    HIT_HEIGHT = 74
+
+    def hit_path(self):
+        rectangle = QRectF(self.width() - self.HIT_WIDTH,
+                           (self.height() - self.HIT_HEIGHT) / 2,
+                           self.HIT_WIDTH, self.HIT_HEIGHT)
+        path = QPainterPath()
+        path.addRoundedRect(rectangle, self.HIT_WIDTH / 2, self.HIT_WIDTH / 2)
+        return path
+
+    def hit_region(self):
+        return QRegion(self.hit_path().toFillPolygon().toPolygon()).intersected(QRegion(self.rect()))
 
     def mouseMoveEvent(self, event):
         self.parentWidget().probe_hover()
@@ -118,29 +148,40 @@ class DockHandle(QToolButton):
     def paintEvent(self, event):
         dock = self.parentWidget()
         painter = QPainter(self)
-        # Layered Windows surfaces ignore pointer hits on fully transparent pixels.
-        # The fixed edge strip already paints the outermost pixels.
-        painter.fillRect(self.rect().adjusted(0, 0, -(dock.EDGE_INSET + 1), 0), QColor(255, 255, 255, 1))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         opacity = 1 - min(1.0, dock.progress / dock.HANDLE_OPACITY_END)
         if opacity <= 0:
             return
         painter.setOpacity(opacity * opacity * (3 - 2 * opacity))
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         center = QPointF(self.width() - self.ARROW_RIGHT_INSET, self.height() / 2)
         arrow = QPainterPath(center + QPointF(1.5, -4))
         arrow.lineTo(center + QPointF(-2, 0))
         arrow.lineTo(center + QPointF(1.5, 4))
-        for color, width in ((QColor(0, 0, 0, 155), 2.6), (QColor(245, 246, 248, 244), 1.8)):
-            painter.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
-                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            painter.drawPath(arrow)
+        light = (dock.layer.light if dock.glass_enabled and dock.layer.light is not None else
+                 not (dock.theme_dark or dock.pure))
+        ink = QColor('#343434' if light else '#f0f0f0')
+        painter.setPen(QPen(ink, 1.8, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(arrow)
 
 
 class DockEdgeHover(QWidget):
+    def hit_path(self):
+        width, height = DockHandle.HIT_WIDTH, DockHandle.HIT_HEIGHT
+        rectangle = QRectF(self.width() - width, (self.height() - height) / 2, width, height)
+        path = QPainterPath()
+        path.addRoundedRect(rectangle, width / 2, width / 2)
+        return path
+
+    def hit_region(self):
+        return QRegion(self.hit_path().toFillPolygon().toPolygon()).intersected(QRegion(self.rect()))
+
     def paintEvent(self, event):
-        # Win32 ignores fully transparent pixels when hit-testing layered windows.
+        # Preserve a tiny native hit surface after the arrow fades, with the
+        # same pill contour rather than a rectangular edge strip.
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(255, 255, 255, 1))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillPath(self.hit_path(), QColor(255, 255, 255, 1))
 
 
 class DockOptics(QOpenGLWidget):
@@ -175,18 +216,6 @@ class DockOptics(QOpenGLWidget):
         self.texture_size = None
         self.error = None
         self.light = None
-        self.tone_checked = 0.0
-        self.awaiting_open = False
-        self.handoff_started = None
-        self.handoff_timer = QTimer(self)
-        self.handoff_timer.setSingleShot(True)
-        self.handoff_timer.timeout.connect(self.update)
-
-    def reset_handoff(self):
-        self.handoff_timer.stop()
-        self.awaiting_open = False
-        self.handoff_started = None
-
     def initializeGL(self):
         try:
             self.program, self.uniform = compile_lens()
@@ -242,25 +271,19 @@ class DockOptics(QOpenGLWidget):
         glass_mix = 1.0
         provisional = (0.0, 0.0, 0.0, 0.0)
         if owner is dock:
-            if self.awaiting_open and dock.progress == 1.0 and self.frame is not None:
-                self.awaiting_open = False
-                self.handoff_started = time.monotonic()
-            if self.frame is None or self.awaiting_open:
+            if self.frame is None:
                 glass_mix = 0.0
-            elif self.handoff_started is not None:
-                t = min(1.0, (time.monotonic() - self.handoff_started) / .15)
-                glass_mix = t * t * (3 - 2 * t)
-                if t == 1.0:
-                    self.handoff_started = None
-                elif not self.handoff_timer.isActive():
-                    self.handoff_timer.start(16)
-            provisional = (.16, .16, .16, .40) if dock.theme_dark or dock.pure else (.67, .74, .85, .40)
+            light = self.light
+            if light is None and dock.backdrop is None:
+                light = not (dock.theme_dark or dock.pure)
+            if light is not None:
+                provisional = (.83, .83, .83, .28) if light else (.16, .16, .16, .28)
         if getattr(dock, 'pure', False):
             from window_glass import draw_clear_material
             draw_clear_material(self, self.program, self.uniform, rect, sample,
                                 (physical_width, physical_height), owner.CORNER_RADIUS,
                                 dock.glass_opacity() if owner is dock else 1.0,
-                                controls=owner is not dock, light_text_background=bool(self.light),
+                                controls=owner is not dock, light=bool(self.light),
                                 glass_mix=glass_mix, provisional=provisional)
             return
         radius = owner.CORNER_RADIUS * view_width / viewport_w
@@ -270,29 +293,29 @@ class DockOptics(QOpenGLWidget):
                     appearance=1.0 - .50 * dock.transparency,
                     body_height=physical_height, surface=surface,
                     panel_radius=min(physical_width / 2, physical_height / 2, radius),
-                    glass_tone=float(bool(self.light) and not dock.theme_dark),
+                    glass_tone=float(bool(self.light)),
                     glass_blur=(2.35 if owner is dock else 3.2) - math.log2(captured_width / width),
                     glass_opacity=dock.glass_opacity() if owner is dock else 1.0,
                     glass_mix=glass_mix, provisional=provisional)
 
-    def set_frame(self, frame, bounds):
-        if self.frame_bounds == bounds and self.frame is not None and frame == self.frame:
-            return
-        self.frame_bounds = bounds
-        self.frame = frame
-        self.dirty = True
-        now = time.monotonic()
-        if self.light is None or now - self.tone_checked >= .14:
-            self.tone_checked = now
-            sample = frame.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation).pixelColor(0, 0)
-            luma = .2126 * sample.redF() + .7152 * sample.greenF() + .0722 * sample.blueF()
-            light = luma > (.47 if self.light else .56)
-            if light != self.light:
-                self.light = light
+    def set_frame(self, frame, bounds, *, notify_parent=True):
+        changed = self.frame_bounds != bounds or self.frame is not frame
+        if changed:
+            self.frame_bounds = bounds
+            self.frame = frame
+            self.dirty = True
+        # Commit the detected tone with this exact frame, so the shader never
+        # paints a dark capture using the previous bright-frame treatment.
+        light = backdrop_is_light(frame, self.light)
+        tone_changed = light != self.light
+        if tone_changed:
+            self.light = light
+            if notify_parent and self.parentWidget().using_glass:
                 self.parentWidget().apply_glass_tone(light)
-        self.update()
-
+        changed = changed or tone_changed
+        if changed:
+            self.update()
+        return tone_changed
 
 class AttachedPanel(QWidget):
     CORNER_RADIUS = 19
@@ -308,6 +331,7 @@ class AttachedPanel(QWidget):
         self.content = None
         self.closing = False
         self.using_glass = False
+        self.seeded_light = None
         self.capture_enabled = False
         self.capture_tile = None
         self.pending_geometry = None
@@ -443,9 +467,11 @@ class AttachedPanel(QWidget):
 
     def apply_glass_tone(self, light):
         from center_ui import clear_styles, stylesheet
-        if light is None:
+        tone_ready = self.layer.frame is not None or self.seeded_light is not None
+        live_light = bool(light) and tone_ready
+        if light is None or not tone_ready:
             light = not self.dock.theme_dark
-        self.dark = self.dock.pure or (not self.dock.monochrome and (self.dock.theme_dark or not light))
+        self.dark = not live_light if self.dock.pure else not self.dock.monochrome and not light
         line = '255,255,255' if self.dark else '0,0,0'
         monochrome = bool(getattr(self.dock, 'monochrome', False))
         ink = '#f5f6f8' if self.dark else '#202020'
@@ -458,14 +484,25 @@ class AttachedPanel(QWidget):
         else:
             fill = '#ffffff' if monochrome else 'rgba(247,248,250,185)'
             hover = '#e7edf8' if diffused else '#e7e9ed'
+        button_fill = '#111111' if monochrome else fill
+        button_ink = '#ffffff' if monochrome else ink
+        button_hover = '#303030' if monochrome else hover
+        quiet_fill = button_fill if monochrome else 'transparent'
+        quiet_ink = button_ink if monochrome else ('white' if self.dark else '#202020')
+        tabs_fill = '#eeeeee' if monochrome else f'rgba({line},24)'
+        selected_tab_fill = button_fill if monochrome else fill
+        selected_tab_ink = button_ink if monochrome else ink
         self.setStyleSheet(stylesheet(self.dark, False, monochrome=monochrome,
                                       neutral=not monochrome and not diffused) + f'''
             QWidget#dockContent, QDialog#dockContent, QWidget#attachedViewport {{ background: transparent; }}
             QWidget#dockPanel QFrame#card, QWidget#dockPanel QFrame#timeCard {{
                 background: transparent; border: 0; border-radius: 12px;
             }}
-            QWidget#dockPanel QPushButton, QWidget#dockPanel QPlainTextEdit, QWidget#dockPanel QLineEdit,
-            QWidget#dockPanel QComboBox, QWidget#dockPanel QDateEdit, QWidget#dockPanel QTimeEdit {{
+            QWidget#dockPanel QPushButton {{
+                background: {button_fill}; color: {button_ink}; border: 1px solid transparent; border-radius: 9px;
+            }}
+            QWidget#dockPanel QPlainTextEdit, QWidget#dockPanel QLineEdit, QWidget#dockPanel QComboBox,
+            QWidget#dockPanel QDateEdit, QWidget#dockPanel QTimeEdit {{
                 background: {fill}; color: {ink}; border: 1px solid transparent; border-radius: 9px;
                 placeholder-text-color: {muted};
             }}
@@ -476,19 +513,21 @@ class AttachedPanel(QWidget):
             }}
             QWidget#dockPanel QListWidget::item {{ padding: 5px 8px; }}
             QWidget#dockPanel QListWidget::item:selected {{ background: {hover}; color: {ink}; }}
-            QWidget#dockPanel QPushButton#quiet {{ background: transparent; color: {'white' if self.dark else '#202020'}; }}
+            QWidget#dockPanel QPushButton#quiet {{ background: {quiet_fill}; color: {quiet_ink}; }}
             QWidget#dockPanel QPushButton:hover, QWidget#dockPanel QPushButton:checked {{
-                background: {hover}; border-color: transparent;
+                background: {button_hover}; border-color: transparent;
             }}
             QWidget#dockPanel QFrame#centerTabs {{
-                background: rgba({line},24); border: 1px solid rgba({line},46); border-radius: 13px;
+                background: {tabs_fill}; border: 1px solid rgba({line},46); border-radius: 13px;
             }}
             QWidget#dockPanel QFrame#centerTabs QPushButton#nav {{
                 padding: 4px 8px; border-radius: 9px; background: transparent;
                 border-color: transparent; color: {'white' if self.dark else '#202020'};
             }}
             QWidget#dockPanel QFrame#centerTabs QPushButton#nav:hover {{ background: rgba({line},26); }}
-            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:checked {{ background: {fill}; color: {ink}; }}
+            QWidget#dockPanel QFrame#centerTabs QPushButton#nav:checked {{
+                background: {selected_tab_fill}; color: {selected_tab_ink};
+            }}
             QWidget#dockPanel QFrame#centerTabs QPushButton#nav:focus {{ border-color: #737373; }}
             QWidget#dockPanel QPushButton#advancedToggle {{ padding: 4px 9px; }}
             QWidget#dockPanel QPushButton#effectSwitch {{
@@ -498,7 +537,9 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QLineEdit:focus, QWidget#dockPanel QPlainTextEdit:focus {{
                 border-color: #737373;
             }}
-            QWidget#dockPanel QPushButton#primary {{ background: {fill}; color: {ink}; font-weight: 700; }}
+            QWidget#dockPanel QPushButton#primary {{
+                background: {button_fill}; color: {button_ink}; font-weight: 700;
+            }}
             QWidget#dockPanel QComboBox QAbstractItemView {{
                 background: {menu}; color: {ink}; selection-background-color: {hover}; selection-color: {ink};
             }}
@@ -507,11 +548,16 @@ class AttachedPanel(QWidget):
             QWidget#dockPanel QScrollArea#centerPage QScrollBar:vertical {{ width: 5px; }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:hover {{ background: rgba({line},160); }}
             QWidget#dockPanel QScrollArea#centerPage QScrollBar::handle:vertical:disabled {{ background: transparent; }}
-        ''' + (clear_styles('QWidget#dockPanel', light and self.using_glass,
+        ''' + (clear_styles('QWidget#dockPanel', live_light,
                             frost_controls=self.using_glass and self.content is not None and
                             self.content.property('frostControls'), live_controls=self.using_glass)
                if self.dock.pure else ''))
         self.update()
+
+    def prime_glass_tone(self, light=None):
+        self.seeded_light = None if light is None else bool(light)
+        self.apply_glass_tone(self.seeded_light)
+        return self.seeded_light is not None
 
     def dialog_finished(self):
         if not self.closing:
@@ -553,8 +599,8 @@ class AttachedPanel(QWidget):
                 base = QColor(35, 35, 35, 213) if self.dark else QColor(225, 235, 251, 213)
                 rim = QColor(194, 194, 194, 130) if self.dark else QColor(168, 194, 236, 130)
             else:
-                base = QColor(33, 33, 33, 232) if self.dark else QColor(245, 245, 245, 232)
-                rim = QColor(255, 255, 255, 140)
+                base = QColor('#212121' if self.dark else '#ffffff')
+                rim = QColor(160, 160, 160, 255) if self.dark else QColor(210, 210, 210, 255)
             painter.setBrush(base)
             painter.setPen(QPen(rim, 1))
             painter.drawRoundedRect(self.optic_rect(), self.CORNER_RADIUS, self.CORNER_RADIUS)
@@ -571,9 +617,11 @@ class AttachedPanel(QWidget):
             self.using_glass = False
             self.layer.hide()
             self.layer.frame = None
-            self.layer.light = None
+            seed = self.seeded_light if self.dock.glass_enabled and not capture_mode() else None
+            self.seeded_light = seed
+            self.layer.light = seed
             self.settle_resize()
-            self.apply_glass_tone(None)
+            self.apply_glass_tone(seed)
             self.update()
         return enabled
 
@@ -613,6 +661,7 @@ class AttachedPanel(QWidget):
         apply_capture_affinity(self, live=False)
         self.capture_enabled = self.using_glass = False
         self.capture_tile = self.pending_geometry = None
+        self.seeded_light = None
         self.layer.frame = None
         self.layer.light = None
         self.dock.panel_closed(self)
@@ -667,15 +716,15 @@ class EdgeDock(QWidget):
     WIDTH = 55
     CAPSULE_WIDTH = 46
     EDGE_INSET = 2
-    HANDLE_WIDTH = 36
-    HANDLE_HEIGHT = 62
+    HANDLE_WIDTH = 26
+    HANDLE_HEIGHT = 80
     PANEL_GAP = 6
     CORNER_RADIUS = 16
     STEP = 38
     DIAMETER = 34
     HOVER_DELAY_MS = 24
     HOVER_PROBE_MS = 40
-    HIDE_DELAY = 0.075
+    HIDE_DELAY = 0.04
     HANDLE_FADE_END = 0.90
     HANDLE_OPACITY_END = 0.62
     MAX_TRANSITION_STEP = 0.024
@@ -786,8 +835,7 @@ class EdgeDock(QWidget):
         self.layer.lower()
         self.handle.setGeometry(self.WIDTH - self.HANDLE_WIDTH, (height - self.HANDLE_HEIGHT) // 2,
                                 self.HANDLE_WIDTH, self.HANDLE_HEIGHT)
-        self.edge_hover.setGeometry(self.WIDTH - self.EDGE_INSET - 1, self.handle.y(),
-                                    self.EDGE_INSET + 1, self.handle.height())
+        self.edge_hover.setGeometry(self.handle.geometry())
         self.layout_icons()
         if self.panel is not None:
             self.position_panel(self.panel)
@@ -812,14 +860,15 @@ class EdgeDock(QWidget):
                     self.panel.capture_enabled = self.panel.prepare_layer(False)
 
     def prepare_layer(self):
-        if capture_mode() or not self.isVisible() or self.progress < 1.0:
+        if capture_mode() or not self.isVisible() or (self.progress < 1.0 and self.transition_to <= 0):
             return
         full = self.glass_enabled and not energy_saver_active()
-        if full and self.backdrop is None:
+        if full and (self.backdrop is None or self.layer.frame is None):
             self.layer.show()
             self.layer.lower()
             if self.layer.isValid() and not self.layer.error and apply_capture_affinity(self, live=True):
-                self.backdrop = DockBackdropCapture()
+                if self.backdrop is None:
+                    self.backdrop = DockBackdropCapture()
         if not full and self.backdrop is not None:
             self.stop_capture()
         if self.panel is not None:
@@ -837,7 +886,6 @@ class EdgeDock(QWidget):
             self.backdrop = None
         self.last_frames = None
         self.using_glass = False
-        self.layer.reset_handoff()
         self.layer.frame = None
         self.layer.frame_bounds = None
         self.layer.light = None
@@ -868,9 +916,33 @@ class EdgeDock(QWidget):
         self.hover_probe.stop()
         if self.panel is not None:
             self.panel.close()
+        self.panel_mouse_press.stop()
         self.stop_capture()
         self.reset_to_handle()
         super().hideEvent(event)
+
+    def reset_for_reopen(self):
+        """Clear transient interaction and capture state before showing the dock again."""
+        for timer in (self.animation, self.hover_timer, self.hover_probe, self.pending_open_timer,
+                      self.capture_timer, self.glass_timer, self.glass_idle_timer):
+            timer.stop()
+        if self.panel is not None:
+            self.panel.close()
+        self.panel_mouse_press.stop()
+        self.cancel_pending_panel()
+        self.stop_capture()
+        self.leave_at = 0.0
+        self.transition_tick = time.monotonic()
+        self.transition_elapsed = self.transition_from = self.transition_to = self.progress = 0.0
+        self.hover_blocked = False
+        self.layer.frame = None
+        self.layer.frame_bounds = None
+        self.layer.light = None
+        self.layer.setVisible(self.glass_enabled and QApplication.platformName() == 'windows')
+        self.set_capture_folded(True)
+        self.layout_icons()
+        self.layer.update()
+        self.update()
 
     def shutdown(self):
         capture = self.backdrop
@@ -887,7 +959,6 @@ class EdgeDock(QWidget):
         self.hover_timer.stop()
         self.capture_timer.stop()
         self.glass_timer.stop()
-        self.layer.reset_handoff()
         if self.backdrop is not None:
             self.glass_idle_timer.start(1200)
         self.cancel_pending_panel()
@@ -913,7 +984,7 @@ class EdgeDock(QWidget):
 
     def pointer_over_dock(self):
         point = self.mapFromGlobal(QCursor.pos())
-        return self.handle.geometry().contains(point) or (self.progress > 0 and self.mask().contains(point))
+        return self.mask().contains(point)
 
     def confirm_hover(self):
         if self.isVisible() and not self.hover_blocked and self.pointer_over_dock():
@@ -941,6 +1012,9 @@ class EdgeDock(QWidget):
         if not self.animation.isActive():
             self.animation.start(16)
         self.update_dock()
+        if (self.transition_to > 0 and self.glass_enabled and not capture_mode() and
+                not energy_saver_active()):
+            self.prepare_layer()
         if (self.progress == 1.0 and self.glass_enabled and not capture_mode() and
                 not self.capture_timer.isActive() and not self.glass_timer.isActive()):
             self.glass_timer.start(24)
@@ -962,8 +1036,6 @@ class EdgeDock(QWidget):
                 self.layer.frame = None
                 self.layer.frame_bounds = None
                 self.layer.light = None
-                self.layer.reset_handoff()
-                self.layer.awaiting_open = True
             self.transition_tick = now
             self.transition_elapsed = 0.0
             self.transition_from = previous
@@ -987,7 +1059,6 @@ class EdgeDock(QWidget):
                 self.glass_timer.start(24)
         if self.progress == 0.0 and not target:
             self.animation.stop()
-            self.layer.reset_handoff()
             if not self.hover_probe.isActive():
                 self.hover_probe.start()
             self.capture_timer.stop()
@@ -1025,12 +1096,17 @@ class EdgeDock(QWidget):
 
     def layout_icons(self):
         folded = self.progress < self.HANDLE_FADE_END
-        if self.progress < 1.0 or not self.layer.awaiting_open:
-            self.set_capture_folded(self.progress < 1.0)
+        self.set_capture_folded(self.progress < 1.0)
         rows = self.entries[:self.capacity] + [self.gear]
         icons_visible = self.progress > .76
         self.handle.setVisible(folded)
         self.handle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, icons_visible)
+        handle_hit = self.handle.hit_region()
+        if self.handle.mask() != handle_hit:
+            self.handle.setMask(handle_hit)
+        hover_hit = self.edge_hover.hit_region()
+        if self.edge_hover.mask() != hover_hit:
+            self.edge_hover.setMask(hover_hit)
         if folded:
             self.handle.raise_()
         self.handle.update()
@@ -1051,9 +1127,7 @@ class EdgeDock(QWidget):
                 button.raise_()
             button.update()
         # Keep the same hit surface while the arrow gives way to the icons.
-        hit_region = region.united(QRegion(self.edge_hover.geometry()))
-        if folded:
-            hit_region = hit_region.united(QRegion(self.handle.geometry()))
+        hit_region = region.united(hover_hit.translated(self.edge_hover.pos()))
         if self.mask() != hit_region:
             self.setMask(hit_region)
         if not self.using_glass:
@@ -1079,11 +1153,12 @@ class EdgeDock(QWidget):
         rect = self.optic_rect()
         if self.glass_enabled:
             frost = QLinearGradient(rect.topLeft(), rect.topRight())
-            dark = self.theme_dark or self.pure
-            near, far = ((52, 52, 52), (30, 30, 30)) if dark else ((185, 206, 238), (151, 173, 210))
+            dark = (not self.layer.light if self.layer.light is not None
+                    else self.theme_dark or self.pure)
+            near, far = ((52, 52, 52), (30, 30, 30)) if dark else ((220, 220, 220), (194, 194, 194))
             frost.setColorAt(0, QColor(*near, round(120 - 120 * self.transparency)))
             frost.setColorAt(1, QColor(*far, round(76 - 90 * self.transparency)))
-            painter.setPen(QPen(QColor(199, 199, 199, 150) if dark else QColor(177, 199, 234, 150), 1))
+            painter.setPen(QPen(QColor(199, 199, 199, 150), 1))
             painter.setBrush(frost)
         else:
             painter.setPen(QPen(QColor('#757575' if self.theme_dark else '#a4a4a4'), 1))
@@ -1103,14 +1178,14 @@ class EdgeDock(QWidget):
             self.last_frames = frames
             for owner, area, (captured, frame) in zip((self, panel), bounds, frames):
                 if owner is not None and captured == area and frame is not None and not frame.isNull():
-                    owner.layer.set_frame(frame, captured)
+                    was_using_glass = owner.using_glass
+                    owner.layer.set_frame(frame, captured, notify_parent=was_using_glass)
                     if not owner.using_glass:
                         owner.using_glass = True
-                        if owner is self and self.motion_enabled and not self.layer.awaiting_open:
-                            self.layer.handoff_started = time.monotonic()
-                        if owner is panel and self.pure:
-                            panel.apply_glass_tone(panel.layer.light)
+                        owner.apply_glass_tone(owner.layer.light)
                         owner.update()
+                    if owner is panel:
+                        panel.seeded_light = None
                     if owner is panel and panel.pending_geometry is not None:
                         panel.animate_to(panel.pending_geometry)
         self.backdrop.submit(bounds)
@@ -1246,9 +1321,9 @@ class EdgeDock(QWidget):
         self.position_panel(self.panel)
         self.panel.content.show()
         live = self.capture_timer.isActive()
-        self.panel.apply_glass_tone(self.layer.light if live else None)
         if not persistent:
             self.panel.fit_content()
+        self.panel.prime_glass_tone()
         self.panel.layer.setVisible(live)
         self.panel.layer.lower()
         self.panel.show_panel()

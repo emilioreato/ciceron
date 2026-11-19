@@ -168,8 +168,8 @@ with TemporaryDirectory() as temporary:
     timer_dialog = center.goal_dialog(attached=True)
     date_editor = timer_dialog.findChild(module.QDateEdit).lineEdit()
     time_editor = timer_dialog.findChild(module.QTimeEdit).lineEdit()
-    assert 'color: #f7f7f7' in date_editor.styleSheet()
-    assert 'color: #f7f7f7' in time_editor.styleSheet()
+    assert 'color:' not in date_editor.styleSheet()
+    assert 'color:' not in time_editor.styleSheet()
     timer_dialog.close()
     timer_dialog.deleteLater()
     assert module.read(module.CONFIG, {})[0]['theme'] == 'dark'
@@ -352,7 +352,8 @@ with TemporaryDirectory() as temporary:
     active_page = pages.currentWidget()
     chooser.setCurrentIndex(chooser.findData('v3'))
     app.processEvents()
-    assert center.dock.pure and center.window.glass and center.pages is pages
+    assert (center.dock.pure and center.window.glass and center.glass_control.isChecked()
+            and not center.glass_control.isEnabled() and center.pages is pages)
     assert pages.currentWidget() is active_page and center.dock.panel.content is center.window
     assert module.read(module.CONFIG, {})[0]['ui_version'] == 'v3'
     center.select_page('general')
@@ -369,7 +370,7 @@ with TemporaryDirectory() as temporary:
     assert v3_geometry == v2_geometry
     center.select_page('settings')
     timer_dialog = center.goal_dialog(attached=True)
-    assert 'color: #f7f7f7' in timer_dialog.findChild(module.QDateEdit).lineEdit().styleSheet()
+    assert 'color:' not in timer_dialog.findChild(module.QDateEdit).lineEdit().styleSheet()
     timer_dialog.close()
     timer_dialog.deleteLater()
     chooser.setCurrentIndex(chooser.findData('v1'))
@@ -427,6 +428,19 @@ with TemporaryDirectory() as temporary:
     assert dock.isVisible() and dock.handle.isVisible() and dock.progress == 0
     assert dock.handle.cursor().shape() == dock.cursor().shape() == module.Qt.CursorShape.ArrowCursor
     assert dock.gear.cursor().shape() == module.Qt.CursorShape.PointingHandCursor
+    handle_hit = dock.handle.hit_region()
+    handle_hit_bounds = handle_hit.boundingRect()
+    arrow_hit_point = module.QPoint(dock.handle.width() - dock.handle.ARROW_RIGHT_INSET,
+                                    dock.handle.height() // 2)
+    assert dock.handle.mapTo(dock, arrow_hit_point).x() == dock.WIDTH - 5
+    assert handle_hit_bounds.width() == dock.handle.HIT_WIDTH < dock.handle.width()
+    assert handle_hit_bounds.height() >= dock.handle.HIT_HEIGHT - 1
+    assert handle_hit_bounds.height() > dock.HANDLE_HEIGHT - 10
+    assert handle_hit_bounds.right() == dock.handle.width() - 1
+    assert handle_hit.contains(arrow_hit_point)
+    assert not handle_hit.contains(handle_hit_bounds.topLeft())
+    assert not handle_hit.contains(handle_hit_bounds.topRight())
+    assert not dock.mask().contains(dock.handle.mapTo(dock, module.QPoint(1, 1)))
     assert dock.mask().contains(dock.handle.geometry().center())
     edge = module.QPoint(dock.width() - 1, dock.handle.geometry().center().y())
     assert dock.mask().contains(edge)
@@ -459,23 +473,30 @@ with TemporaryDirectory() as temporary:
     assert (max(xs) - min(xs) + 1) / ratio < 8
     assert (max(ys) - min(ys) + 1) / ratio < 12
     assert all(image.size() == handle.size() and all(
-        image.pixelColor(left + x, top + y) == handle.pixelColor(left + x, top + y)
+        image.pixelColor(left + x, top + y).alpha() == handle.pixelColor(left + x, top + y).alpha()
         for y in range(height) for x in range(width)) for image in handle_images[1:])
     arrow_tones = [handle.pixelColor(left + x, top + y).lightness() for x, y in points]
-    assert min(arrow_tones) < 70 and max(arrow_tones) > 225
+    assert max(arrow_tones) < 90, 'La flecha clara debe ser un trazo único, sin contorno.'
+    pure_tones = [handle_images[2].pixelColor(left + x, top + y).lightness() for x, y in points]
+    assert min(pure_tones) > 220, 'La flecha oscura debe conservar el mismo trazo en V3.'
     dock.theme_dark = True
+    dock.glass_enabled = True
     dark_handle = dock.grab().toImage()
     assert [dark_handle.pixelColor(left + x, top + y).alpha() for y in range(height)
             for x in range(width)] == [handle.pixelColor(left + x, top + y).alpha()
                                        for y in range(height) for x in range(width)]
-    assert [dark_handle.pixelColor(left + x, top + y).lightness() for x, y in points] == arrow_tones
-    with patch('edge_dock.QCursor') as cursor:
+    dark_tones = [dark_handle.pixelColor(left + x, top + y).lightness() for x, y in points]
+    assert min(dark_tones) > 220, 'La flecha debe adaptar solo el color, sin añadir un borde.'
+    with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'prepare_layer') as start_glass, \
+            patch('edge_dock.energy_saver_active', return_value=False), \
+            patch('edge_dock.capture_mode', return_value=False):
         cursor.pos.return_value = dock.mapToGlobal(edge)
         enter = QEnterEvent(QPointF(edge), QPointF(edge), QPointF(cursor.pos.return_value))
         dock.enterEvent(enter)
         assert dock.hover_timer.isActive() and dock.progress == dock.transition_to == 0.0
         assert dock.hover_timer.interval() + dock.hover_probe.interval() < 70
         assert not dock.animation.isActive() and not dock.glass_timer.isActive()
+        start_glass.assert_not_called()
         cursor.pos.return_value = dock.mapToGlobal(QPoint(-5, -5))
         dock.leaveEvent(QEvent(QEvent.Type.Leave))
         assert not dock.hover_timer.isActive() and not dock.animation.isActive()
@@ -485,6 +506,7 @@ with TemporaryDirectory() as temporary:
         assert dock.hover_timer.isActive()
         dock.hover_timer.timeout.emit()
         assert not dock.hover_timer.isActive() and dock.transition_to == 1.0
+        start_glass.assert_called_once()
         dock.leaveEvent(QEvent(QEvent.Type.Leave))
         assert dock.transition_to == 1.0
         dock.reset_to_handle()
@@ -492,12 +514,14 @@ with TemporaryDirectory() as temporary:
         assert not dock.hover_timer.isActive()
         dock.reveal()
         assert dock.transition_to == 1.0
+        assert start_glass.call_count == 2
         dock.reset_to_handle()
         dock.theme_dark = True
         dock.pure = False
         dock.glass_enabled = True
         dock.handle.click()
         assert dock.transition_to == 1.0 and dock.progress < 1.0
+        assert start_glass.call_count == 3
         assert dock.animation.isActive()
         dock.reset_to_handle()
         with patch('edge_dock.time.monotonic', return_value=20.0) as now:
@@ -510,56 +534,36 @@ with TemporaryDirectory() as temporary:
                 now.return_value = time_at_edge
                 dock.update_dock()
                 assert dock.mask().contains(edge) and dock.transition_to == 1.0
-                assert dock.edge_hover.isVisible() and dock.edge_hover.geometry().contains(edge)
+                assert dock.edge_hover.isVisible() and dock.edge_hover.hit_region().translated(
+                    dock.edge_hover.pos()).contains(edge)
                 assert dock.cursor().shape() == module.Qt.CursorShape.ArrowCursor
             assert dock.progress == 1.0 and dock.handle.isHidden()
             assert not dock.mask().contains(module.QPoint(edge.x(), dock.handle.y() - 1))
         dock.reset_to_handle()
-    # The compact arrow needs no continuous desktop capture.
+    # Desktop capture starts on its worker; repeated reveals cannot block input
+    # or spawn additional workers while the first frame is pending.
     dock.progress = dock.transition_to = dock.leave_at = 0.0
-    with patch('edge_dock.QCursor') as cursor, patch.object(dock, 'capture') as capture, \
+    with patch('edge_dock.QCursor') as cursor, patch('edge_dock.DockBackdropCapture') as capture_worker, \
             patch('edge_dock.energy_saver_active', return_value=False), \
-            patch('edge_dock.time.monotonic', return_value=30.0) as now:
-        dock.backdrop = source = Mock(lens=None)
-        dock.layer.frame = Mock()
+            patch('edge_dock.capture_mode', return_value=False), \
+            patch.object(dock.layer, 'isValid', return_value=True), \
+            patch('edge_dock.apply_capture_affinity', return_value=True), \
+            patch.object(dock, 'capture') as submit_capture:
+        capture_worker.return_value.latest = None
+        capture_worker.return_value.lens = None
+        dock.backdrop = None
+        dock.layer.frame = None
+        dock.layer.light = None
         cursor.pos.return_value = dock.mapToGlobal(edge)
         dock.reveal()
-        assert dock.layer.frame is None and dock.layer.awaiting_open
-        assert dock.last_frames is source.latest
-        now.return_value = 30.10
-        dock.update_dock()
-        warm_progress = dock.progress
-        assert 0.0 < dock.progress < 1.0 and not dock.glass_timer.isActive()
+        assert capture_worker.call_count == 1
+        assert dock.capture_timer.isActive() and submit_capture.call_count == 1
+        dock.reveal()
         dock.prepare_layer()
-        assert not dock.capture_timer.isActive()
-        capture.assert_not_called()
-        for tick in range(1, 12):
-            now.return_value = 30.10 + tick * .02
-            dock.update_dock()
-        assert dock.progress == 1.0 and dock.glass_timer.isActive()
-        dock.glass_timer.stop()
-        dock.prepare_layer()
-        assert dock.capture_timer.isActive()
-        capture.assert_called_once()
-        cursor.pos.return_value = dock.geometry().topLeft() - module.QPoint(100, 100)
+        assert capture_worker.call_count == 1
+        assert submit_capture.call_count == 1
         dock.reset_to_handle()
-        assert not dock.capture_timer.isActive()
-        assert dock.glass_idle_timer.isActive()
         dock.release_idle_capture()
-        source.close.assert_called_once()
-        assert dock.backdrop is None and not dock.glass_idle_timer.isActive()
-        cursor.pos.return_value = dock.mapToGlobal(edge)
-        now.return_value = 40.0
-        dock.reveal()
-        now.return_value = 40.10
-        dock.update_dock()
-        assert abs(dock.progress - warm_progress) < 1e-6
-        assert not dock.glass_timer.isActive() and not dock.capture_timer.isActive()
-        for tick in range(1, 12):
-            now.return_value = 40.10 + tick * .02
-            dock.update_dock()
-        assert dock.progress == 1.0 and dock.glass_timer.isActive()
-        dock.reset_to_handle()
     dock.progress = dock.transition_to = 1.0
     dock.leave_at = 0.0
     dock.motion_enabled = False
@@ -628,8 +632,22 @@ with TemporaryDirectory() as temporary:
                     dock.capture_timer, dock.glass_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Mostrar barra lateral'
-    center.toggle_edge_dock_visibility()
+    dock.progress = 0.63
+    dock.transition_to = 1.0
+    dock.layer.frame = Mock()
+    dock.layer.light = True
+    dock.pending_panel = ('clock', Mock(), False)
+    dock.pending_open_timer.start(1000)
+    dock.panel_mouse_press.receiver = 123
+    with patch.object(dock, 'reveal') as reveal:
+        center.dock_visibility_action.trigger()
+    reveal.assert_called_once()
     assert dock.isVisible() and dock.handle.isVisible() and dock.progress == 0.0
+    assert dock.transition_to == 0.0 and dock.layer.frame is None and dock.layer.light is None
+    assert dock.pending_panel is None and dock.panel_mouse_press.receiver is None
+    assert not any(timer.isActive() for timer in
+                   (dock.animation, dock.hover_timer, dock.pending_open_timer, dock.capture_timer,
+                    dock.glass_timer, dock.glass_idle_timer))
     center.update_tray_actions()
     assert center.dock_visibility_action.text() == 'Ocultar barra lateral'
     center.dock.close()

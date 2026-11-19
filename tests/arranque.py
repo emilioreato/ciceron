@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QPushButton
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'src'))
+import windows_glass
 
 
 def load_module(profile):
@@ -68,6 +69,18 @@ with TemporaryDirectory() as temporary:
         'C:\\Program Files\\Ciceron\\Ciceron.exe')
     assert module.startup_target('"C:\\Program Files\\Ciceron\\Ciceron.exe') is None
 
+    def mark_taskbar(hwnd, name, size):
+        name.value = 'Shell_TrayWnd'
+        return True
+
+    with patch.object(windows_glass, 'client_bounds', return_value=(100, 200, 160, 24)), \
+            patch.object(windows_glass, 'window_at', return_value=20), \
+            patch.object(windows_glass, 'root_window', return_value=30), \
+            patch.object(windows_glass, 'window_class', side_effect=mark_taskbar), \
+            patch.object(windows_glass, 'set_window_pos') as raise_count:
+        windows_glass.restore_above_taskbar(10)
+        raise_count.assert_called_once_with(10, -1, 0, 0, 0, 0, 0x0013)
+
     with patch.object(module.QSystemTrayIcon, 'isSystemTrayAvailable', return_value=True):
         controller = module.App()
     app.processEvents()
@@ -80,23 +93,44 @@ with TemporaryDirectory() as temporary:
     with patch.object(module, 'restore_above_taskbar') as restore_stacking:
         controller.count.show()
         app.processEvents()
-        assert controller.count.isVisible() and controller.count._stacking_check.isActive()
+        assert (controller.count.isVisible() and controller.count._stacking_check.isActive()
+                and controller.count._stacking_monitor.isActive())
         timer_geometry = controller.count.geometry()
         controller.tray_clicked(module.QSystemTrayIcon.ActivationReason.Trigger)
         assert controller.count._stacking_check.isActive()
         QTest.qWait(220)
         assert not controller.count._stacking_check.isActive()
         assert restore_stacking.call_count == 1
+        QTest.qWait(controller.count.STACKING_RECHECK_MS - 220 + 40)
+        assert restore_stacking.call_count >= 2
         for _ in range(30):
             app.processEvents()
             if controller.dock.panel is not None:
                 break
             QTest.qWait(20)
         QTest.qWait(200)
-        assert restore_stacking.call_count == 1
+        assert restore_stacking.call_count >= 2
+        controller.count.hide()
+        assert not controller.count._stacking_check.isActive()
+        assert not controller.count._stacking_monitor.isActive()
+        controller.count.show()
+        assert controller.count._stacking_monitor.isActive()
+        previous_show_timer = controller.cfg['show_timer']
+        previous_target = controller.cfg['target']
+        controller.cfg['show_timer'] = True
+        controller.cfg['target'] = (module.dt.datetime.now() + module.dt.timedelta(minutes=2)).isoformat(
+            timespec='minutes')
+        controller._count_fits = True
+        controller._count_hidden_by_layout = False
+        with patch.object(controller, 'tick'):
+            controller.count.hide()
+            controller.count_visibility_changed()
+            assert controller.count.isVisible(), 'El contador debe recuperarse si Windows lo oculta.'
+        controller.cfg['show_timer'] = previous_show_timer
+        controller.cfg['target'] = previous_target
     assert controller.dock.panel is not None
     assert controller.dock.panel.key == 'settings'
-    assert not controller.count._stacking_check.isActive()
+    assert controller.count._stacking_check.isActive()
     assert controller.count.isVisible()
     assert controller.count.geometry() == timer_geometry
 

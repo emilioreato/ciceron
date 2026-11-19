@@ -5,6 +5,7 @@ os.environ['QT_QPA_PLATFORM']='offscreen'
 tmp=tempfile.TemporaryDirectory(); os.environ['APPDATA']=tmp.name; os.environ['CICERON_HOME']=str(Path(tmp.name)/'Aplicacion')
 sys.path.insert(0,str(Path('src').resolve()))
 from PySide6.QtCore import QTimer
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QCheckBox,QMessageBox,QInputDialog,QLabel,QPushButton
 import browser_bridge as bridge
 import browser_ui
@@ -22,9 +23,15 @@ with patch.object(bridge, 'sessions', return_value=[{'browser': 'Edge', 'enabled
     d.refresh()
     assert indicator_color(d) == '#2db47b'
     assert d.status.text() == 'Activado · Edge'
-with patch.object(bridge, 'sessions', return_value=[{'browser': 'Edge', 'enabled': False}]):
+with patch.object(bridge, 'sessions', side_effect=[
+        [{'browser': 'Edge', 'enabled': False}], [{'browser': 'Edge', 'enabled': True}]]) as sessions:
     d.refresh()
     assert indicator_color(d) == '#e5656c'
+    assert 'sincronizando' in d.status.text().casefold()
+    QTest.qWait(320)
+    assert sessions.call_count == 2
+    assert indicator_color(d) == '#2db47b'
+    assert d.status.text() == 'Activado · Edge'
 assert d.save_selectors(hide_sidebar=True)
 assert bridge.load_policy()['x_selectors']==[X_SIDEBAR]
 assert not d.save_selectors(['invalid; color:red'])

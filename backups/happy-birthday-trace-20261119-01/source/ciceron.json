@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "emilioreato.happy-birthday",
+  "version": "1.1.5",
+  "name": "Happy Birthday",
+  "description": "Alta rápida por fecha, almanaque anual y avisos nativos de Windows.",
+  "tags": ["cumpleaños", "agenda", "recordatorios"],
+  "entrypoint": "happy_birthday.pyw",
+  "python": "3.12",
+  "icon": "icono.png",
+  "dock": {"visible": true, "wheel": "passthrough"},
+  "data": {"version": 1, "files": ["cumpleanos.json"]}
+}

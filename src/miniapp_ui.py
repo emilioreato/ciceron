@@ -37,9 +37,10 @@ class MiniappDialog(GlassDialog):
             return
         version = preferences.get('ui_version', 'v2')
         classic = version == 'v1'
-        pure = version == 'v3'
+        configured_glass = bool(preferences.get('glass', True))
+        pure = version == 'v3' and configured_glass
         dark = not classic and dark_mode(preferences.get('theme', 'system'))
-        glass = pure or (not classic and bool(preferences.get('glass', True)))
+        glass = not classic and configured_glass
         transparency = {'clear': .20, 'contrast': -.18}.get(preferences.get('clarity'), 0)
         appearance = (classic, pure, dark, glass, transparency)
         if appearance == self.appearance:
@@ -54,16 +55,19 @@ class MiniappDialog(GlassDialog):
 
     def update_style(self):
         classic, pure, dark, glass, _ = self.appearance
-        style = stylesheet(dark, glass, classic)
-        surface = 'rgba(42,42,42,190)' if dark or pure else 'rgba(255,255,255,185)'
-        ink = '#fafafa' if dark or pure else '#252525'
-        highlight = '#525252' if dark or pure else '#dddddd'
+        light = self.has_light_glass()
+        style = stylesheet(dark and not light, glass, classic)
+        dark_list = (dark or pure) and not light
+        surface = '#ffffff' if classic else (
+            'rgba(42,42,42,190)' if dark_list else 'rgba(255,255,255,185)')
+        ink = '#202020' if classic else ('#fafafa' if dark_list else '#252525')
+        highlight = '#e9e9e9' if classic else ('#525252' if dark_list else '#dddddd')
         style += f"""
             QListWidget {{ background: {surface}; color: {ink}; border: none; border-radius: 11px; padding: 4px; }}
             QListWidget::item {{ min-height: 28px; padding: 2px 7px; border-radius: 7px; }}
             QListWidget::item:selected {{ background: {highlight}; color: {ink}; }}
         """
         if pure:
-            style += clear_styles('QWidget#liveWindow' if self.live else '',
+            style += clear_styles('QWidget#liveWindow' if self.live else '', light=light,
                                   frost_controls=True, live_controls=self.live)
         self.setStyleSheet(style)

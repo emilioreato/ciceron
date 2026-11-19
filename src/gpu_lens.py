@@ -24,6 +24,9 @@ float lip_inset(float depth, float width) {
 }
 '''
 
+# Cambio 77: the V3 window base uses a deeper neutral frost, separate from white frosted controls.
+CLEAR_MODE_FROSTED_WINDOW = 6.0
+
 FRAGMENT = '''#version 120
 uniform sampler2D backdrop;
 uniform float pixels;
@@ -78,11 +81,12 @@ void main() {
         float depth = (0.975 - edge) * diameter * 0.5;
         vec4 fallback = vec4(provisional.rgb * provisional.a, provisional.a) * coverage;
         if (provisional.a > 0.0) {
-            // The dock has a visible rim even before it has a captured frame.
+            // Keep the cold-start fallback neutral and restrained until its
+            // first captured frame is ready.
             float rim = 1.0 - smoothstep(0.7, 2.0, depth);
-            float rim_tone = provisional.r < 0.5 ? 0.89 : 0.32;
-            float alpha = mix(provisional.a, 0.66, rim);
-            vec3 color = mix(provisional.rgb, vec3(rim_tone), 0.65 * rim);
+            float rim_tone = provisional.r < 0.5 ? 0.36 : 0.72;
+            float alpha = mix(provisional.a, 0.44, rim);
+            vec3 color = mix(provisional.rgb, vec3(rim_tone), 0.24 * rim);
             fallback = vec4(color * alpha, alpha) * coverage;
         }
         if (glass_mix <= 0.0) {
@@ -93,9 +97,11 @@ void main() {
         vec2 coord = sample_origin + clamp(lookup, 0.0, 1.0) * sample_scale;
         if (clear_mode > 1.5) {
             // Prefilter the backdrop before the widely spaced Gaussian taps.
-            bool frosted = clear_mode > 2.5;
+            bool window_frost = clear_mode > 5.5;
+            bool frosted = (clear_mode > 2.5 && clear_mode < 3.5) || window_frost;
             float lod = frosted ? 2.5 : 1.5;
-            vec2 d = (frosted ? 5.0 : 3.2) * sample_scale / extent;
+            if (window_frost) lod = 3.0;
+            vec2 d = (window_frost ? 6.0 : (frosted ? 5.0 : 3.2)) * sample_scale / extent;
             vec3 color = texture2D(backdrop, coord, lod).rgb * 0.25;
             color += (texture2D(backdrop, coord + vec2(d.x, 0.0), lod).rgb
                     + texture2D(backdrop, coord - vec2(d.x, 0.0), lod).rgb
@@ -104,13 +110,25 @@ void main() {
             color += (texture2D(backdrop, coord+d, lod).rgb + texture2D(backdrop, coord-d, lod).rgb
                     + texture2D(backdrop, coord+vec2(d.x,-d.y), lod).rgb
                     + texture2D(backdrop, coord+vec2(-d.x,d.y), lod).rgb) * 0.0625;
-            bool text_surface = clear_mode > 3.5;
+            bool text_surface = clear_mode > 3.5 && clear_mode < 5.5;
             float feather = text_surface ? 11.0 : 1.5;
             float alpha = glass_opacity * (1.0-smoothstep(0.975-feather/diameter, 0.975, edge));
-            if (text_surface) {
+            if (window_frost) {
+                // Blur away recognizable desktop detail, then lift it with a muted gray veil.
+                color = mix(color, vec3(0.76), 0.32);
+            } else if (text_surface) {
                 color = mix(color, vec3(clear_mode > 4.5 ? 0.97 : 0.12), 0.68);
             } else {
-                color = frosted ? mix(color, vec3(0.99), 0.62) : mix(color, vec3(0.13), 0.66);
+                if (frosted) {
+                    color = mix(color, vec3(0.99), 0.62);
+                } else if (glass_tone > 0.5) {
+                    color = mix(color, vec3(0.82), 0.18);
+                    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+                    // Keep dark control ink legible even on a locally dark patch.
+                    color = mix(color, vec3(1.0), max(0.0, (0.57 - luma) / max(1.0 - luma, 0.001)));
+                } else {
+                    color = mix(color, vec3(0.13), 0.66);
+                }
             }
             gl_FragColor = vec4(color * alpha, alpha);
             return;
@@ -225,6 +243,29 @@ void main() {
     gl_FragColor = vec4(color * alpha, alpha);
 }
 '''
+
+
+def backdrop_is_light(frame, previous):
+    if frame is None or frame.isNull():
+        return bool(previous)
+    width, height = frame.width(), frame.height()
+    total = 0.0
+    samples = 0
+    # Sample the region instead of trusting a single center pixel.
+    for row in range(5):
+        y = min(height - 1, ((row * 2 + 1) * height) // 10)
+        for column in range(5):
+            x = min(width - 1, ((column * 2 + 1) * width) // 10)
+            sample = frame.pixelColor(x, y)
+            total += .2126 * sample.redF() + .7152 * sample.greenF() + .0722 * sample.blueF()
+            samples += 1
+    luma = total / samples
+    return luma > (.47 if previous else .56)
+
+
+def backdrop_is_dark(theme_dark, detected_light):
+    """Use the UI theme until the first captured frame supplies its tone."""
+    return not detected_light if detected_light is not None else bool(theme_dark)
 
 
 def pointer_motion(previous, delta, dt, half_life=0.05):

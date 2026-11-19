@@ -1,0 +1,69 @@
+"""Shared window material for Python miniapps running in their own process."""
+import json
+import os
+from pathlib import Path
+
+from PySide6.QtCore import QFileSystemWatcher, QTimer
+
+from center_ui import GlassDialog, clear_styles, dark_mode, panel, stylesheet
+
+
+class MiniappDialog(GlassDialog):
+    def __init__(self, parent=None, *, attached=False):
+        super().__init__(parent, attached=attached)
+        if attached:
+            return
+        self.floating = True
+        self.material_changed = self.update_style
+        self.preferences = Path(os.environ['CICERON_UI_CONFIG'])
+        self.watcher = QFileSystemWatcher([str(self.preferences.parent)], self)
+        self.debounce = QTimer(self, interval=100, singleShot=True)
+        self.watcher.directoryChanged.connect(lambda _: self.debounce.start())
+        self.watcher.fileChanged.connect(lambda _: self.debounce.start())
+        self.debounce.timeout.connect(self.apply_preferences)
+        self.appearance = None
+        self.apply_preferences()
+
+    def apply_preferences(self):
+        if self.preferences.is_file() and not self.watcher.files():
+            self.watcher.addPath(str(self.preferences))
+        try:
+            preferences = json.loads(self.preferences.read_text(encoding='utf-8'))
+            if not isinstance(preferences, dict):
+                return
+        except FileNotFoundError:
+            preferences = {}
+        except (OSError, ValueError):
+            return
+        version = preferences.get('ui_version', 'v2')
+        classic = version == 'v1'
+        pure = version == 'v3'
+        dark = not classic and dark_mode(preferences.get('theme', 'system'))
+        glass = pure or (not classic and bool(preferences.get('glass', True)))
+        transparency = {'clear': .20, 'contrast': -.18}.get(preferences.get('clarity'), 0)
+        appearance = (classic, pure, dark, glass, transparency)
+        if appearance == self.appearance:
+            return
+        self.appearance = appearance
+        self.dark, self.glass, self.transparency = dark, glass, transparency
+        self.setProperty('pureGlass', pure)
+        self.setProperty('frostControls', pure)
+        self.setWindowOpacity(.995 if pure else 1)
+        self.enable_material(glass, dark)
+        self.update_style()
+
+    def update_style(self):
+        classic, pure, dark, glass, _ = self.appearance
+        style = stylesheet(dark, glass, classic)
+        surface = 'rgba(42,42,42,190)' if dark or pure else 'rgba(255,255,255,185)'
+        ink = '#fafafa' if dark or pure else '#252525'
+        highlight = '#525252' if dark or pure else '#dddddd'
+        style += f"""
+            QListWidget {{ background: {surface}; color: {ink}; border: none; border-radius: 11px; padding: 4px; }}
+            QListWidget::item {{ min-height: 28px; padding: 2px 7px; border-radius: 7px; }}
+            QListWidget::item:selected {{ background: {highlight}; color: {ink}; }}
+        """
+        if pure:
+            style += clear_styles('QWidget#liveWindow' if self.live else '',
+                                  frost_controls=True, live_controls=self.live)
+        self.setStyleSheet(style)

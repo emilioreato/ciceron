@@ -14,7 +14,7 @@ from uuid import uuid4
 
 STYLES = ("V1", "V2", "V3")
 MONTHS = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
-DATE_NUMBERS = re.compile(r"[0-9]+")
+DATE_INPUT = re.compile(r"\s*([0-9]{1,2})[\s./-]+([0-9]{1,2})(?:[\s./-]+([0-9]{4}))?\s*")
 LEGACY_HEADER = ("dd-mm,nombres*", "dd-mm,nombres", "dd-mm,nombres(optional)")
 NAME_LIMIT = 100
 
@@ -37,12 +37,11 @@ def clean_name(value, *, optional=False):
 
 def parse_date(text, today=None):
     today = today or date.today()
-    numbers = DATE_NUMBERS.findall(text)
-    if (len(numbers) not in (2, 3) or any(len(part) > 2 for part in numbers[:2])
-            or (len(numbers) == 3 and len(numbers[2]) != 4)):
+    match = DATE_INPUT.fullmatch(text) if isinstance(text, str) else None
+    if match is None:
         raise ValueError("Usá día-mes-año, por ejemplo 8-9-2004, o 8-9 si no sabés el año.")
-    day, month = map(int, numbers[:2])
-    year = int(numbers[2]) if len(numbers) == 3 else None
+    day, month = map(int, match.groups()[:2])
+    year = int(match.group(3)) if match.group(3) is not None else None
     try:
         birth = date(2000 if year is None else year, month, day)
     except ValueError:

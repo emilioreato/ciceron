@@ -89,9 +89,10 @@ def clear_styles(scope='', light=False, frost_controls=False, live_controls=Fals
         rule('QMenu, QComboBox QAbstractItemView', 'background: #363636; color: #fafafa;'),
     )
     if live_controls:
-        control_ink = '#202731' if frost_controls else '#f7f7f7'
-        placeholder = '#4a5564' if frost_controls else '#dadada'
-        disabled = '#596374' if frost_controls else '#cdcdcd'
+        light_controls = frost_controls or light
+        control_ink = '#202731' if light_controls else '#f7f7f7'
+        placeholder = '#4a5564' if light_controls else '#dadada'
+        disabled = '#596374' if light_controls else '#cdcdcd'
         styles += (
             rule(controls + ', QPushButton:hover, QPushButton:pressed, QPushButton:checked, QPushButton#quiet, QPushButton#quiet:hover, QPushButton#primary, QPushButton#primary:hover, QPushButton#more, QPushButton#heroAction, QPushButton#destructive, QFrame#centerTabs QPushButton#nav, QFrame#centerTabs QPushButton#nav:checked, QFrame#appCard QPushButton',
                  f'background: transparent; color: {control_ink}; placeholder-text-color: {placeholder}; border: 1px solid transparent;'),
@@ -108,7 +109,11 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         ink, muted, base, field, stroke, accent = '#f7f7f7', '#ededed', '#252525', '#353535', '#a7a7a7', '#ffffff'
         surface, highlight, pressed, danger = '#303030', '#454545', '#555555', '#ffb4bd'
         primary, primary_hover, primary_ink = '#eeeeee', '#ffffff', '#191919'
-    elif monochrome or neutral:
+    elif monochrome:
+        ink, muted, base, field, stroke, accent = '#202020', '#5b5b5b', '#ffffff', '#ffffff', '#bcbcbc', '#111111'
+        surface, highlight, pressed, danger = '#ffffff', '#e9e9e9', '#dcdcdc', '#a12840'
+        primary, primary_hover, primary_ink = '#111111', '#303030', '#ffffff'
+    elif neutral:
         ink, muted, base, field, stroke, accent = '#242424', '#555555', '#fafafa', '#ffffff', '#bcbcbc', '#343434'
         surface, highlight, pressed, danger = '#ffffff', '#eeeeee', '#e0e0e0', '#8b3030'
         primary, primary_hover, primary_ink = '#343434', '#252525', '#ffffff'
@@ -123,10 +128,11 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
         highlight, pressed, danger = '#eaf1ff', '#dce9ff', '#a12840'
         primary, primary_hover, primary_ink = '#265ebc', '#1c50ab', '#ffffff'
     rim = 'rgba(220, 220, 220, 80)' if dark else 'rgba(255, 255, 255, 250)'
-    button_fill = (
+    button_fill = '#111111' if monochrome else (
         f'qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {field},stop:1 {surface})'
         if glass else field
     )
+    button_ink = '#ffffff' if monochrome else ink
     styles = f"""
     QWidget {{ color: {ink}; font-family: "Segoe UI Variable Text", "Segoe UI"; font-size: 14px; }}
     QDialog, QMenu, QCalendarWidget {{ background: {base}; }}
@@ -144,7 +150,7 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     }}
     QFrame#timeCard {{ border-color: {stroke}; }}
     QPushButton {{
-        background: {button_fill}; border: 1px solid {stroke}; border-radius: 14px;
+        background: {button_fill}; color: {button_ink}; border: 1px solid {stroke}; border-radius: 14px;
         padding: 7px 14px; min-height: 18px; font-weight: 550;
     }}
     QPushButton:hover {{ background: {highlight}; border-color: {accent}; }}
@@ -256,6 +262,18 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
                     selection-background-color: {primary}; selection-color: {primary_ink};
                 }}
             '''
+    if monochrome:
+        styles += """
+            QPushButton#quiet, QPushButton#more, QPushButton#heroAction, QPushButton#destructive {
+                background: #111111; color: #ffffff; border-color: #111111;
+            }
+            QPushButton#quiet:hover, QPushButton#more:hover, QPushButton#heroAction:hover,
+            QPushButton#destructive:hover { background: #303030; border-color: #303030; }
+            QFrame#centerTabs QPushButton#nav { color: #202020; background: transparent; }
+            QFrame#centerTabs QPushButton#nav:checked {
+                color: #ffffff; background: #111111; border-color: #111111;
+            }
+        """
     return styles
 
 
@@ -287,15 +305,19 @@ class LiveMaterial:
             elif not enabled:
                 self.material.stop()
 
+    def has_light_glass(self):
+        return bool(self.live and self.material is not None and self.material.light)
+
     def set_live(self, live):
         self.live = live
         self.setObjectName('liveWindow' if live else '')
         if self.material_changed:
             self.material_changed()
         else:
-            style = stylesheet(self.dark, self.glass)
+            light = self.has_light_glass()
+            style = stylesheet(self.dark and not light, self.glass)
             if self.property('pureGlass'):
-                style += clear_styles('QWidget#liveWindow' if live else '',
+                style += clear_styles('QWidget#liveWindow' if live else '', light=light,
                                       frost_controls=self.property('frostControls'), live_controls=live)
             self.setStyleSheet(style)
 
@@ -343,7 +365,7 @@ class CenterWindow(QWidget):
         if self.property('dockEmbedded'):
             return
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#fafafa' if self.monochrome else (
+        painter.fillRect(self.rect(), QColor('#ffffff' if self.monochrome else (
             '#222222' if self.dark else '#edf2fb')))
         if not self.glass:
             return

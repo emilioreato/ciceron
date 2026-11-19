@@ -1,10 +1,9 @@
 """Refract live desktop pixels through the controls of a native Qt window."""
-import time
 
 from OpenGL import GL
 from OpenGL.GL import shaders
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QCursor, QSurfaceFormat
+from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPlainTextEdit,
@@ -12,19 +11,20 @@ from PySide6.QtWidgets import (
 )
 
 from center_ui import APP_CARD_IDENTITY_RADIUS, AppCardIdentity, V3_CONTROL_RADIUS
-from gpu_lens import EDGE_OPTICS, VERTEX, compile_lens, paint_optic
-from windows_glass import BackdropCapture, apply_capture_affinity, capture_mode, get_style
+from gpu_lens import (CLEAR_MODE_FROSTED_WINDOW, EDGE_OPTICS, VERTEX,
+                      backdrop_is_dark, backdrop_is_light,
+                      compile_lens, paint_optic)
+from lens_capture import WindowBackdropCapture
+from windows_glass import apply_capture_affinity, capture_mode, client_bounds, get_style
 
 
 FRAGMENT = '''#version 120
 uniform sampler2D backdrop;
 uniform vec2 pixels;
-uniform vec2 cursor;
 uniform vec4 surface;
 uniform vec3 tint;
 uniform float material;
 uniform float transparency;
-uniform float elapsed;
 uniform float floating_panel;
 varying vec2 uv;
 ''' + EDGE_OPTICS + '''
@@ -62,10 +62,9 @@ void main() {
                 : (q.x > q.y ? vec2(sign(local.x), 0.0) : vec2(0.0, sign(local.y)));
     float width = radius * 0.70;
     float shoulder = 1.0 - smoothstep(0.0, width, -distance);
-    float near_pointer = exp(-length(pos - cursor) / 115.0);
-    float wave = sin(distance * 0.47 - elapsed * 8.0) * near_pointer * 0.95;
     float direction = 0.55 - normal.y * 0.36 - normal.x * 0.13;
-    vec2 refracted = uv - normal * (lip_inset(-distance, width) + shoulder * wave) / pixels;
+    // Keep the surface stable while the captured desktop moves underneath it.
+    vec2 refracted = uv - normal * lip_inset(-distance, width) / pixels;
     vec2 spread = normal * (shoulder * (0.36 + direction * 0.5) / pixels);
     vec3 desktop = texture2D(backdrop, refracted).rgb;
     float chroma = max(desktop.r, max(desktop.g, desktop.b)) - min(desktop.r, min(desktop.g, desktop.b));
@@ -83,6 +82,13 @@ void main() {
     gl_FragColor = vec4(mix(glass, vec3(1.0), reflection) * alpha, alpha);
 }
 '''
+
+
+# Cambio 88: a stable, display-paced capture avoids stale glass while another window scrolls.
+def glass_capture_interval(refresh_rate):
+    """Track the display at 30–60 fps, regardless of window activation."""
+    hz = min(60.0, max(30.0, float(refresh_rate or 30.0)))
+    return max(4, round(1000.0 / hz))
 
 
 def glass_text_rect(widget):
@@ -104,7 +110,7 @@ def glass_text_rect(widget):
 
 
 def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius, opacity=1.0, *,
-                        controls=True, light_text_background=False, glass_mix=1.0,
+                        controls=True, light=False, glass_mix=1.0,
                         provisional=(0.0, 0.0, 0.0, 0.0)):
     """Draw the panel and its visible native controls from one desktop texture."""
     owner = layer.parentWidget()
@@ -128,8 +134,9 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
         paint_optic(program, uniforms, w*sx, region, QPointF(), 0,
                     ((x,bottom),(right,bottom),(right,y),(x,y)), body_height=h*sy,
                     panel_radius=min(corner*sx, w*sx/2, h*sy/2),
-                    clear_mode=mode, glass_opacity=opacity, glass_mix=glass_mix, provisional=provisional)
-    draw(rect, radius, 1)
+                    clear_mode=mode, glass_tone=float(light), glass_opacity=opacity,
+                    glass_mix=glass_mix, provisional=provisional)
+    draw(rect, radius, CLEAR_MODE_FROSTED_WINDOW)
     if not controls:
         return
     GL.glEnable(GL.GL_SCISSOR_TEST)
@@ -171,7 +178,7 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
             draw(QRectF(area), V3_CONTROL_RADIUS, 3 if frost else 2)
         for area, clip, corner in text_surfaces:
             scissor(clip)
-            draw(QRectF(area), corner, 5 if light_text_background else 4)
+            draw(QRectF(area), corner, 5 if light else 4)
     finally:
         if not blend_was_enabled:
             GL.glDisable(GL.GL_BLEND)
@@ -197,14 +204,16 @@ class GlassBackdrop(QOpenGLWidget):
         self.size_on_gpu = None
         self.uniform = {}
         self.error = None
-        self.capture_source = BackdropCapture()
+        self.capture_source = None
         self.dark = False
+        self.light = None
         self.floating_panel = False
         self.transparency = 0.0
-        self.started = time.monotonic()
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.refresh)
         self.capture_hwnd = None
+        self.ready = False
         self.hide()
 
     def initializeGL(self):
@@ -214,8 +223,8 @@ class GlassBackdrop(QOpenGLWidget):
                 shaders.compileShader(VERTEX, GL.GL_VERTEX_SHADER),
                 shaders.compileShader(FRAGMENT, GL.GL_FRAGMENT_SHADER))
             self.uniform = {name: GL.glGetUniformLocation(self.program, name) for name in
-                            ('backdrop', 'pixels', 'cursor', 'surface', 'tint', 'material',
-                             'transparency', 'elapsed', 'floating_panel')}
+                            ('backdrop', 'pixels', 'surface', 'tint', 'material',
+                             'transparency', 'floating_panel')}
             self.texture = GL.glGenTextures(1)
             self.mipmapped = False
             GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
@@ -236,31 +245,35 @@ class GlassBackdrop(QOpenGLWidget):
         if not apply_capture_affinity(self.window(), live=True):
             return
         self.capture_hwnd = hwnd
-        frame = self.capture_source.capture_behind(hwnd)
-        if frame.isNull():
-            self.stop()
-            return
         self.setGeometry(self.window().rect())
         self.lower()
         self.show()
         if self.error or not self.isValid():
             self.stop()
             return
-        self.frame = frame
-        self.texture_dirty = True
-        self.on_ready(True)
-        self.timer.start(40)
+        self.capture_source = WindowBackdropCapture()
+        self.ready = False
+        self.timer.start(self.capture_interval())
+        self.refresh()
         self.update()
 
+    def capture_interval(self):
+        screen = self.window().screen()
+        return glass_capture_interval(screen.refreshRate() if screen is not None else 60.0)
+
     def stop(self):
-        active = self.timer.isActive() or self.frame is not None
+        active = self.timer.isActive() or self.frame is not None or self.ready
         self.timer.stop()
         if self.capture_hwnd is not None:
             apply_capture_affinity(self.window(), live=False)
             self.capture_hwnd = None
         self.hide()
         self.frame = None
-        self.capture_source.close()
+        self.light = None
+        source, self.capture_source = self.capture_source, None
+        if source is not None:
+            source.close()
+        self.ready = False
         if active:
             self.on_ready(False)
 
@@ -270,14 +283,38 @@ class GlassBackdrop(QOpenGLWidget):
             self.stop()
             return
         self.setGeometry(owner.rect())
-        interval = 40 if owner.isActiveWindow() else 120
+        interval = self.capture_interval()
         if self.timer.interval() != interval:
             self.timer.setInterval(interval)
-        frame = self.capture_source.capture_behind(self.capture_hwnd)
-        if not frame.isNull():
-            self.frame = frame
-            self.texture_dirty = True
+        source = self.capture_source
+        if source is None:
+            return
+        if source.error is not None:
+            self.stop()
+            return
+        source.submit(self.capture_hwnd)
+        latest = source.latest
+        if latest is None:
+            return
+        hwnd, bounds, frame = latest
+        if hwnd != self.capture_hwnd or bounds != client_bounds(hwnd):
+            return
+        if frame is not self.frame:
+            changed = self.set_frame(frame)
+            if not self.ready or changed:
+                self.ready = True
+                self.on_ready(True)
             self.update()
+
+    def set_frame(self, frame):
+        # Keep the visual treatment in step with this captured frame. A stale
+        # tone briefly makes dark captures look washed out.
+        light = backdrop_is_light(frame, self.light)
+        changed = light != self.light
+        self.frame = frame
+        self.texture_dirty = True
+        self.light = light
+        return changed
 
     def surfaces(self):
         owner = self.window()
@@ -317,7 +354,8 @@ class GlassBackdrop(QOpenGLWidget):
 
     def paintGL(self):
         pure = getattr(self, 'pure', False)
-        base = 0.0 if pure else (0.14 if self.dark else 0.94)
+        dark = backdrop_is_dark(self.dark, self.light)
+        base = 0.0 if pure else (0.14 if dark else 0.94)
         GL.glClearColor(base, base, base, float(not pure and not self.floating_panel))
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
         if self.frame is None or self.program is None:
@@ -345,18 +383,15 @@ class GlassBackdrop(QOpenGLWidget):
             self.mipmapped = pure
         if pure:
             draw_clear_material(self, self.clear_program, self.clear_uniforms, QRectF(self.rect()),
-                                (0, 0, 1, 1), (width, height), 19)
+                                (0, 0, 1, 1), (width, height), 19, light=bool(self.light))
             return
         scale_x, scale_y = width / self.width(), height / self.height()
-        pointer = self.mapFromGlobal(QCursor.pos())
         GL.glUseProgram(self.program)
         GL.glUniform1i(self.uniform['backdrop'], 0)
         GL.glUniform2f(self.uniform['pixels'], width, height)
-        GL.glUniform2f(self.uniform['cursor'], pointer.x() * scale_x, pointer.y() * scale_y)
-        GL.glUniform1f(self.uniform['elapsed'], time.monotonic() - self.started)
         GL.glUniform1f(self.uniform['transparency'], self.transparency)
         GL.glUniform1f(self.uniform['floating_panel'], float(self.floating_panel))
-        GL.glUniform3f(self.uniform['tint'], *((.105, .105, .105) if self.dark else (.97, .985, 1.0)))
+        GL.glUniform3f(self.uniform['tint'], *((.105, .105, .105) if dark else (.97, .985, 1.0)))
         GL.glUniform1f(self.uniform['material'], -1.0)
         self.draw_quad(self.rect())
         for surface, clip, material in self.surfaces():

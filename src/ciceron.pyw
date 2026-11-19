@@ -271,24 +271,37 @@ class ClearCheckBox(QCheckBox):
 class CountdownButton(QPushButton):
     moved=Signal(int)
     visibility_changed=Signal()
+    STACKING_RECHECK_MS = 300
     def __init__(self):
         super().__init__()
+        self._closing = False
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._stacking_check = QTimer(self)
         self._stacking_check.setInterval(150)
         self._stacking_check.setSingleShot(True)
         self._stacking_check.timeout.connect(self._restore_stacking)
+        self._stacking_monitor = QTimer(self)
+        self._stacking_monitor.setInterval(self.STACKING_RECHECK_MS)
+        self._stacking_monitor.timeout.connect(self._restore_stacking)
 
     def showEvent(self, event):
         super().showEvent(event)
         if self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
             self._stacking_check.start()
+            self._stacking_monitor.start()
         self.visibility_changed.emit()
 
     def hideEvent(self, event):
         self._stacking_check.stop()
+        self._stacking_monitor.stop()
         super().hideEvent(event)
         self.visibility_changed.emit()
+
+    def closeEvent(self, event):
+        self._closing = True
+        self._stacking_check.stop()
+        self._stacking_monitor.stop()
+        super().closeEvent(event)
 
     def _restore_stacking(self):
         if self.isVisible() and self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
@@ -402,7 +415,8 @@ class App:
         self.timer.setSingleShot(True)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.tick)
-        self.count.visibility_changed.connect(self.tick, Qt.ConnectionType.QueuedConnection)
+        self.count.visibility_changed.connect(self.count_visibility_changed,
+                                              Qt.ConnectionType.QueuedConnection)
         self.tick()
         if self.cfg['show_timer'] and target(self.cfg): self._show_count()
         if self.broken_config: QMessageBox.warning(self.window,'Configuración','No se pudo leer la configuración; se conservó el archivo original.')
@@ -456,6 +470,12 @@ class App:
     def _hide_count(self):
         self._count_hidden_by_layout=False
         self.count.hide()
+    def count_visibility_changed(self):
+        if (not self.count.isVisible() and not self.count._closing and
+                not self._count_hidden_by_layout and self._count_fits and
+                self.cfg['show_timer'] and target(self.cfg)):
+            self._show_count()
+        self.tick()
     def _remember_count_position(self, x):
         if self._count_screen is None: return
         screen=self._count_screen.geometry(); available=max(1,screen.width()-self.count.width())
@@ -508,10 +528,11 @@ class App:
     def apply_appearance(self, *_):
         from edge_dock import tool_icon
 
-        monochrome = self.cfg['ui_version'] == 'v1'
+        ui_version = self.cfg['ui_version']
+        monochrome = ui_version == 'v1'
         self.window.monochrome = monochrome
         self.window.dark = False if monochrome else dark_mode(self.cfg['theme'])
-        self.window.glass = self.cfg['ui_version'] == 'v3' or (bool(self.cfg['glass']) and not monochrome)
+        self.window.glass = ui_version == 'v3' or (ui_version == 'v2' and bool(self.cfg['glass']))
         for frame, _ in self.builtin_cards:
             key = frame.objectName().removesuffix('Card')
             frame.findChild(AppCardIdentity).set_icon(tool_icon(
@@ -519,7 +540,7 @@ class App:
                 light_background=not (self.window.glass or self.window.dark)))
         self.window.transparency = {'clear': 0.20, 'balanced': 0.0, 'contrast': -0.18}.get(
             self.cfg['clarity'], 0.0)
-        pure = self.cfg['ui_version'] == 'v3' and self.window.glass
+        pure = ui_version == 'v3' and self.window.glass
         QApplication.instance().setProperty('pureGlass', pure)
         if self.dock is not None:
             self.dock.pure = pure
@@ -536,9 +557,13 @@ class App:
         if hasattr(self, 'glass_control'):
             blocked = self.glass_control.blockSignals(True)
             self.glass_control.setChecked(self.window.glass)
-            self.glass_control.setEnabled(self.cfg['ui_version'] == 'v2')
+            self.glass_control.setEnabled(ui_version == 'v2')
+            self.glass_control.setToolTip(
+                'V1 es opaco y no utiliza Liquid Glass.' if monochrome else
+                'V3 utiliza siempre Liquid Glass.' if ui_version == 'v3' else
+                'Activa o desactiva Liquid Glass en esta versión.')
             self.glass_control.blockSignals(blocked)
-            self.clarity_control.setEnabled(self.window.glass and not pure)
+            self.clarity_control.setEnabled(ui_version == 'v2' and self.window.glass)
             self.theme_control.setEnabled(self.cfg['ui_version'] == 'v2')
         self.update_capture_preference()
         self.update_window_style()
@@ -560,6 +585,18 @@ class App:
         self.banner.live = False
         if pure_glass:
             appearance += clear_styles()
+        if self.window.monochrome:
+            selected_fill, selected_ink = '#111111', '#ffffff'
+        elif self.window.dark:
+            selected_fill, selected_ink = '#dddddd', '#212121'
+        else:
+            selected_fill, selected_ink = '#265ebc', '#ffffff'
+        appearance += f"""
+            QFrame#centerTabs QPushButton#nav:checked {{
+                background: {selected_fill}; color: {selected_ink};
+                border: 1px solid {selected_fill}; font-weight: 700;
+            }}
+        """
         if app.styleSheet() != appearance:
             app.setStyleSheet(appearance)
         self.window.update()
@@ -610,7 +647,6 @@ class App:
 
     def build_library(self, content):
         self.app_search = QLineEdit()
-        self.app_search.setPlaceholderText('Buscar por nombre o etiqueta')
         self.app_search.setAccessibleName('Buscar aplicaciones')
         self.app_search.setClearButtonEnabled(True)
         content.addWidget(self.app_search)
@@ -663,8 +699,9 @@ class App:
         for label, value in (('Alta', 'clear'), ('Media', 'balanced'), ('Baja', 'contrast')):
             clarity.addItem(label, value)
         clarity.setCurrentIndex(max(0, clarity.findData(self.cfg['clarity'])))
-        clarity.setEnabled(glass.isChecked())
-        glass.toggled.connect(lambda _: clarity.setEnabled(glass.isChecked()))
+        clarity.setEnabled(self.cfg['ui_version'] == 'v2' and glass.isChecked())
+        glass.toggled.connect(lambda _: clarity.setEnabled(
+            self.cfg['ui_version'] == 'v2' and glass.isChecked()))
         clarity.currentIndexChanged.connect(
             lambda index: self.change_preference('clarity', clarity.itemData(index), clarity))
         self.card(content, 'Transparencia', '', control=clarity)
@@ -898,6 +935,8 @@ class App:
             from edge_dock import EdgeDock
             self.dock = EdgeDock(icon(), self.toggle_settings_panel, tray_geometry=self.tray.geometry)
             QApplication.instance().aboutToQuit.connect(self.dock.shutdown)
+        elif not self.dock.isVisible():
+            self.dock.reset_for_reopen()
         self.dock.pure = bool(QApplication.instance().property('pureGlass'))
         self.dock.theme_dark = self.window.dark
         self.dock.monochrome = self.window.monochrome
@@ -930,7 +969,9 @@ class App:
         ]
         for entry in dock_apps:
             wheel = entry['package']['dock']['wheel'] if entry.get('package') else 'passthrough'
-            entries.append((entry['name'], self.app_icon(entry),
+            icon = ('gift' if entry.get('package', {}).get('id') == 'emilioreato.happy-birthday'
+                    else self.app_icon(entry))
+            entries.append((entry['name'], icon,
                             lambda checked=False, item=entry: self.launch(item), wheel))
         self.dock.set_entries(entries)
         self.dock_signature = signature
@@ -1447,15 +1488,14 @@ class App:
         d.setProperty('expandDown', True)
         box=QVBoxLayout(d); box.setContentsMargins(12,9,12,11); box.setSpacing(8)
         box.addWidget(caption('Timer', 'title'))
-        name=QLineEdit(str(self.cfg['title'])); name.setAccessibleName('Nombre del objetivo'); name.setPlaceholderText('Nombre del objetivo'); box.addWidget(name)
+        name=QLineEdit(str(self.cfg['title'])); name.setAccessibleName('Nombre del objetivo'); box.addWidget(name)
         guard = ClearCheckBox('Avisos de distracción')
         guard.setChecked(bool(self.cfg['guardian']))
         box.addWidget(guard)
         t=target(self.cfg); date=QDateEdit(); date.setAccessibleName('Fecha'); date.setDisplayFormat('dd-MM-yyyy'); date.setDate(QDate(t.year,t.month,t.day) if t else QDate.currentDate())
         date.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         date.setFixedHeight(36)
-        editor_ink = '#f7f7f7' if d.dark else '#202020'
-        editor_style = f'background: transparent; border: 0; padding: 0; color: {editor_ink};'
+        editor_style = 'background: transparent; border: 0; padding: 0;'
         date.lineEdit().setStyleSheet(editor_style)
         date_field = QFrame()
         date_row = QHBoxLayout(date_field)

@@ -56,6 +56,11 @@ class BrowserDialog(GlassDialog):
         self.setWindowTitle('Bloqueo web · Cicerón')
         self.broken = False
         self.next_enabled = True
+        self.sync_retries = 0
+        self.sync_timer = QTimer(self)
+        self.sync_timer.setSingleShot(True)
+        self.sync_timer.timeout.connect(self.refresh)
+        self.finished.connect(self.sync_timer.stop)
         box = QVBoxLayout(self)
         box.setContentsMargins(14, 10, 14, 12)
         box.setSpacing(10)
@@ -97,7 +102,7 @@ class BrowserDialog(GlassDialog):
             self.policy = dict(bridge.DEFAULT)
             self.toggle.setEnabled(False)
             QMessageBox.warning(self,'Configuración del navegador',f'No se pudo leer la configuración. No se sobrescribirá: {e}')
-        self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(5000); self.finished.connect(self.timer.stop); self.refresh()
+        self.refresh()
         self.resize(340 if attached else 430, self.sizeHint().height())
 
     def open_options(self):
@@ -160,7 +165,7 @@ class BrowserDialog(GlassDialog):
         active = requested if requested is not None else True in states
         state = 'Activado' if active else 'Desactivado'
         error = any(item.get('error') for item in connected)
-        syncing = requested is not None and any(current != requested for current in states)
+        syncing = requested is not None and bool(connected) and any(current != requested for current in states)
         if error:
             connection = 'Error de conexión'
         elif syncing:
@@ -172,13 +177,23 @@ class BrowserDialog(GlassDialog):
         has_state = requested is not None or any(current is not None for current in states)
         status = f'{state} · {connection}' if has_state else connection
         self.status.setText(status)
-        protecting = active and connected and not (error or syncing or self.broken)
+        protecting = active and bool(connected) and not (error or syncing or self.broken)
         self.status_indicator.set_status(protecting, status)
+        if syncing and not error and not self.broken and self.sync_retries < 12:
+            self.sync_retries += 1
+            if not self.sync_timer.isActive():
+                self.sync_timer.start(250)
+        else:
+            self.sync_timer.stop()
+            if not syncing or error or self.broken:
+                self.sync_retries = 0
         self.next_enabled = not active
         action = 'Activar' if self.next_enabled else 'Desactivar'
         self.toggle.setText(action)
         self.toggle.setAccessibleName(f'{action} Pausa Feed')
     def persist(self,next_policy):
+        self.sync_timer.stop()
+        self.sync_retries = 0
         try: bridge.save_policy(next_policy)
         except (OSError,ValueError) as e: QMessageBox.warning(self,'No se pudo guardar',str(e)); return False
         self.policy=bridge.validate(next_policy); self.refresh(); return True
@@ -244,7 +259,6 @@ class SelectorDialog(GlassDialog):
 
         row = QHBoxLayout()
         self.entry = QLineEdit()
-        self.entry.setPlaceholderText('Nuevo selector CSS')
         self.entry.setAccessibleName('Nuevo selector CSS')
         row.addWidget(self.entry, 1)
         add = QPushButton('Añadir')
