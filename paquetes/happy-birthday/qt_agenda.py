@@ -6,6 +6,7 @@ from datetime import date
 from html import escape
 from pathlib import Path
 import time
+import traceback
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QItemSelectionModel, QLocale, QPoint,
                             QPropertyAnimation, QRect, QSize, Qt, QTimer)
@@ -64,13 +65,11 @@ class BirthdayRow(QWidget):
         super().__init__(rows)
         self.rows, self.item = rows, item
         self.on_edit = on_edit
+        self.setStyleSheet('background: transparent;')
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 0, 4, 0)
-        layout.setSpacing(6)
-        self.label = QLabel(text)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self.label, 1)
+        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(0)
+        layout.addStretch(1)
         self.remove = QPushButton('×')
         self.remove.setObjectName('birthdayRemove')
         self.remove.setAccessibleName(f'Eliminar {text}')
@@ -108,6 +107,7 @@ class Agenda(MiniappDialog):
         super().__init__(attached=host is not None)
         self.host = host
         self.path, self.records = path, state
+        self.trace_id = f'{time.time_ns():x}'
         self.editing = None
         self.startup_enabled = None
         self.attempted = None
@@ -179,7 +179,6 @@ class Agenda(MiniappDialog):
         layout.addWidget(self.search)
         self.rows = BirthdayList()
         self.rows.setAccessibleName('Cumpleaños próximos')
-        self.rows.itemDoubleClicked.connect(lambda _: self.edit_selected())
         layout.addWidget(self.rows, 1)
         self.empty = panel('muted', '')
         layout.addWidget(self.empty)
@@ -191,6 +190,8 @@ class Agenda(MiniappDialog):
         QShortcut(QKeySequence('Ctrl+F'), self, activated=self.search.setFocus)
         QShortcut(QKeySequence('Ctrl+L'), self, activated=self.open_year)
         self.render()
+        self.trace('agenda-init', module=str(Path(__file__).resolve()), host=host is not None,
+                   records=len(self.records.entries))
 
         self.tray = (host if host is not None else
                      Tray(self, path.parent, HERE / 'icono.ico', self.restore, self.quit,
@@ -205,6 +206,25 @@ class Agenda(MiniappDialog):
 
     def state(self):
         return 'normal' if self.isVisible() else 'withdrawn'
+
+    def trace(self, event, **fields):
+        """Append bounded UI diagnostics without recording birthday names or images."""
+        log = self.path.parent / 'happy-birthday-ui.log'
+        try:
+            if log.exists() and log.stat().st_size > 131072:
+                with log.open('r', encoding='utf-8', errors='replace') as stream:
+                    recent = stream.read()[-65536:]
+                log.write_text(recent, encoding='utf-8')
+            # repr keeps traceback newlines escaped so each event stays on one line.
+            details = ' '.join(f'{key}={value!r}' for key, value in fields.items())[:4096]
+            line = f'{time.strftime("%Y-%m-%d %H:%M:%S")} session={self.trace_id} {event} {details}\n'
+            with log.open('a', encoding='utf-8') as stream:
+                stream.write(line)
+        except (OSError, UnicodeError):
+            pass
+
+    def trace_exception(self, event):
+        self.trace(event, traceback=traceback.format_exc())
 
     def set_feedback(self, text, *, timeout=0):
         self.feedback_timer.stop()
@@ -245,6 +265,14 @@ class Agenda(MiniappDialog):
         self.rows.clear()
         today = date.today()
         needle = fold(self.search.text())
+        seen_people = set()
+        duplicate_person_dates = 0
+        for birthday in self.records.entries:
+            key = fold(birthday.name), birthday.day, birthday.month
+            if key in seen_people:
+                duplicate_person_dates += 1
+            seen_people.add(key)
+        rows_rendered = 0
         for birthday in upcoming(self.records.entries, today):
             if needle and needle not in fold(f'{birthday.label} {birthday.short_date}'):
                 continue
@@ -252,24 +280,31 @@ class Agenda(MiniappDialog):
             age = birthday.upcoming_age(upcoming_day)
             age_label = f' · {age} años' if age is not None else ''
             row_text = f'{birthday.label}   ·   {upcoming_day:%d-%m-%Y}{age_label}'
-            row = QListWidgetItem()
+            row = QListWidgetItem(row_text)
+            row.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             row.setToolTip(row_text)
-            row.setData(Qt.ItemDataRole.AccessibleTextRole, row_text)
             row.setData(Qt.ItemDataRole.UserRole, birthday)
             row.setSizeHint(QSize(0, 31))
             self.rows.addItem(row)
             row_widget = BirthdayRow(
                 self.rows,
                 row,
-                row_text,
+                birthday.label,
                 lambda checked=False, entry=birthday: self.delete_birthday(entry),
                 self.edit_selected,
             )
             self.rows.setItemWidget(row, row_widget)
+            rows_rendered += 1
         self.empty.setText('No hay resultados.' if needle else 'Todavía no hay cumpleaños guardados.')
         self.empty.setVisible(self.rows.count() == 0)
         self.rows.setVisible(self.rows.count() != 0)
         self.update_actions()
+        if not needle:
+            self.trace('list-render', module=str(Path(__file__).resolve()),
+                       records=len(self.records.entries), rows=rows_rendered,
+                       duplicate_person_dates=duplicate_person_dates,
+                       display_text_sources=rows_rendered, row_widgets=rows_rendered,
+                       row_widget_text_labels=0)
 
     def clear_form(self, *, focus=True):
         self.editing = None
@@ -369,17 +404,34 @@ class Agenda(MiniappDialog):
 
     def open_year(self, selected=None):
         if getattr(self, 'year_dialog', None) is not None:
+            self.trace('calendar-raise', visible=self.year_dialog.isVisible())
             self.year_dialog.raise_()
             return
-        calendar = Year(self, selected if isinstance(selected, date) else date.today())
-        self.year_dialog = calendar
+        selected = selected if isinstance(selected, date) else date.today()
+        self.trace('calendar-open-start', selected=selected.isoformat(), records=len(self.records.entries),
+                   module=str(Path(__file__).resolve()))
+        calendar = None
+        try:
+            calendar = Year(self, selected)
+            self.year_dialog = calendar
 
-        def finished():
+            def finished():
+                self.trace('calendar-closed', result=calendar.result())
+                self.year_dialog = None
+                calendar.deleteLater()
+
+            calendar.finished.connect(finished)
+            calendar.open()
+            self.trace('calendar-open-returned', visible=calendar.isVisible(),
+                       months=len(calendar.months), card_width=calendar.card.width(),
+                       card_height=calendar.card.height())
+        except Exception:
+            self.trace_exception('calendar-open-error')
             self.year_dialog = None
-            calendar.deleteLater()
-
-        calendar.finished.connect(finished)
-        calendar.open()
+            if calendar is not None:
+                calendar.close()
+                calendar.deleteLater()
+            self.set_feedback('No se pudo abrir el almanaque. Diagnóstico guardado.', timeout=8000)
 
     def open_today(self):
         self.restore()
@@ -552,32 +604,59 @@ class Year(QDialog):
         self.show_date(selected)
 
     def showEvent(self, event):
-        super().showEvent(event)
-        QTimer.singleShot(32, self, self.load_backdrop)
-        motion = self.agenda.host is None or self.agenda.host.center.cfg.get('dock_motion', True)
-        origin = self.origin.intersected(self.rect())
-        if not motion or origin.isEmpty():
-            return
-        preview = QLabel(self.card)
-        preview.setPixmap(self.agenda.grab())
-        preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        preview.setGeometry(QRect(QPoint(0, 0), origin.size()))
-        self.content.hide()
-        self.card.setGeometry(origin)
-        preview.show()
-        animation = QPropertyAnimation(self.card, b'geometry', self)
-        animation.setStartValue(origin)
-        animation.setEndValue(self.destination)
-        animation.setDuration(230)
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        animation.finished.connect(self.content.show)
-        animation.finished.connect(preview.hide)
-        animation.finished.connect(preview.deleteLater)
-        animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        preview = animation = None
+        try:
+            super().showEvent(event)
+            QTimer.singleShot(32, self, self.load_backdrop)
+            motion = self.agenda.host is None or self.agenda.host.center.cfg.get('dock_motion', True)
+            origin = self.origin.intersected(self.rect())
+            self.agenda.trace('calendar-show', motion=motion, origin_width=origin.width(),
+                              origin_height=origin.height(), screen=self.screen().name())
+            if not motion or origin.isEmpty():
+                return
+            preview = QLabel(self.card)
+            self.agenda.trace('calendar-animation-grab-start')
+            frame = self.agenda.grab()
+            self.agenda.trace('calendar-animation-grab-done', null=frame.isNull(),
+                              width=frame.width(), height=frame.height())
+            preview.setPixmap(frame)
+            preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            preview.setGeometry(QRect(QPoint(0, 0), origin.size()))
+            self.content.hide()
+            self.card.setGeometry(origin)
+            preview.show()
+            animation = QPropertyAnimation(self.card, b'geometry', self)
+            animation.setStartValue(origin)
+            animation.setEndValue(self.destination)
+            animation.setDuration(230)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            animation.finished.connect(self.content.show)
+            animation.finished.connect(preview.hide)
+            animation.finished.connect(preview.deleteLater)
+            animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        except Exception:
+            self.agenda.trace_exception('calendar-show-error')
+            if animation is not None:
+                animation.stop()
+            if preview is not None:
+                preview.hide()
+                preview.deleteLater()
+            self.content.show()
+            self.card.setGeometry(self.destination)
 
     def load_backdrop(self):
-        if self.isVisible():
-            self.snapshot = self.blur_work_area(self.screen())
+        if not self.isVisible():
+            return
+        try:
+            self.agenda.trace('calendar-backdrop-start', screen=self.screen().name())
+            image = self.blur_work_area(self.screen())
+            self.snapshot = image
+            self.update()
+            self.agenda.trace('calendar-backdrop-ready', null=image.isNull(),
+                              width=image.width(), height=image.height())
+        except Exception:
+            self.snapshot = QImage()
+            self.agenda.trace_exception('calendar-backdrop-error')
             self.update()
 
     def blur_work_area(self, screen):
@@ -599,6 +678,8 @@ class Year(QDialog):
 
     def mousePressEvent(self, event):
         if not self.card.geometry().contains(event.position().toPoint()):
+            self.agenda.trace('calendar-dismiss-outside', card_x=self.card.x(), card_y=self.card.y(),
+                              card_width=self.card.width(), card_height=self.card.height())
             QToolTip.hideText()
             self.reject()
             event.accept()
@@ -606,9 +687,12 @@ class Year(QDialog):
             super().mousePressEvent(event)
 
     def change(self, delta):
-        year = self.selected.year + delta
-        if 1 <= year <= 9999:
-            self.show_date(date(year, self.selected.month, 1))
+        try:
+            year = self.selected.year + delta
+            if 1 <= year <= 9999:
+                self.show_date(date(year, self.selected.month, 1))
+        except Exception:
+            self.agenda.trace_exception('calendar-year-change-error')
 
     def pick_day(self, table, item):
         if item.toolTip():
@@ -620,9 +704,12 @@ class Year(QDialog):
     def select_item(self, table):
         items = table.selectedItems()
         if items:
-            day = items[0].data(Qt.ItemDataRole.UserRole)
-            if day != self.selected:
-                self.show_date(day)
+            try:
+                day = items[0].data(Qt.ItemDataRole.UserRole)
+                if day != self.selected:
+                    self.show_date(day)
+            except Exception:
+                self.agenda.trace_exception('calendar-day-select-error')
 
     def show_date(self, selected):
         previous = getattr(self, 'selected', None)
