@@ -60,6 +60,11 @@ class BirthdayList(QListWidget):
         """)
 
 
+class MonthTable(QTableWidget):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class BirthdayRow(QWidget):
     def __init__(self, rows, item, text, on_delete, on_edit):
         super().__init__(rows)
@@ -261,8 +266,23 @@ class Agenda(MiniappDialog):
             if isinstance(row, BirthdayRow):
                 row.remove.setVisible(item is current)
 
-    def render(self):
+    def clear_rows(self):
+        """Remove row widgets as well as model items before rebuilding the list."""
+        removed_widgets = 0
+        for index in range(self.rows.count()):
+            item = self.rows.item(index)
+            widget = self.rows.itemWidget(item)
+            if widget is None:
+                continue
+            self.rows.removeItemWidget(item)
+            widget.hide()
+            widget.deleteLater()
+            removed_widgets += 1
         self.rows.clear()
+        return removed_widgets
+
+    def render(self):
+        removed_widgets = self.clear_rows()
         today = date.today()
         needle = fold(self.search.text())
         seen_people = set()
@@ -303,6 +323,7 @@ class Agenda(MiniappDialog):
             self.trace('list-render', module=str(Path(__file__).resolve()),
                        records=len(self.records.entries), rows=rows_rendered,
                        duplicate_person_dates=duplicate_person_dates,
+                       previous_row_widgets_removed=removed_widgets,
                        display_text_sources=rows_rendered, row_widgets=rows_rendered,
                        row_widget_text_labels=0)
 
@@ -582,14 +603,18 @@ class Year(QDialog):
             tile = QVBoxLayout()
             tile.setSpacing(5)
             tile.addWidget(panel('heading', spanish.monthName(index + 1).capitalize()))
-            table = QTableWidget(6, 7)
+            table = MonthTable(6, 7)
             table.setHorizontalHeaderLabels(('Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'))
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             table.horizontalHeader().setMinimumSectionSize(15)
             table.verticalHeader().hide()
-            table.verticalHeader().setDefaultSectionSize(18)
-            table.verticalHeader().setMinimumSectionSize(18)
-            table.setFixedHeight(6 * 18 + 23)
+            cell_height = 17
+            table.verticalHeader().setDefaultSectionSize(cell_height)
+            table.verticalHeader().setMinimumSectionSize(cell_height)
+            for row in range(6):
+                table.setRowHeight(row, cell_height)
+            header_height = table.horizontalHeader().sizeHint().height()
+            table.setFixedHeight(6 * cell_height + header_height + 2 * table.frameWidth() + 4)
             table.setShowGrid(False)
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

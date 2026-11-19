@@ -964,6 +964,7 @@ class App:
         self.dock.transparency = self.window.transparency
         self.dock.show()
         self.dock.raise_()
+        self.dock.prime_initial_capture()
 
     def toggle_settings_panel(self):
         self.wheel_filter.remember_foreground()

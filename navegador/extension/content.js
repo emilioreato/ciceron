@@ -78,9 +78,11 @@
     #${OVERLAY_ID} .pf-card {
       width: min(560px, 100%) !important;
       padding: 30px !important;
-      border: 1px solid #dce4dd !important;
+      border: 1px solid rgba(255,255,255,.56) !important;
       border-radius: 18px !important;
-      background: #fff !important;
+      background: rgba(231,236,231,.68) !important;
+      -webkit-backdrop-filter: blur(24px) saturate(115%) !important;
+      backdrop-filter: blur(24px) saturate(115%) !important;
       box-shadow: 0 18px 60px rgba(0,0,0,.08) !important;
       text-align: center !important;
     }

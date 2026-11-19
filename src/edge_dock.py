@@ -748,6 +748,7 @@ class EdgeDock(QWidget):
         self.pending_open_timer.timeout.connect(self.open_pending_panel)
         self.backdrop = None
         self.last_frames = None
+        self.initial_capture_attempted = False
         # Establish the GL composition before the native dock is first shown.
         self.layer.setVisible(QApplication.platformName() == 'windows')
         self.open_settings = open_settings
@@ -872,12 +873,32 @@ class EdgeDock(QWidget):
         if changed and QApplication.platformName() == 'windows':
             self.layer.setVisible(self.glass_enabled)
         if changed and self.isVisible():
-            if self.glass_enabled and self.progress > 0 and not capture_mode():
-                self.glass_timer.start(180)
+            if self.glass_enabled:
+                self.prime_initial_capture()
+                if self.progress > 0 and not capture_mode():
+                    self.glass_timer.start(180)
             elif not self.glass_enabled:
+                self.initial_capture_attempted = False
                 self.stop_capture()
                 if self.panel is not None:
                     self.panel.capture_enabled = self.panel.prepare_layer(False)
+
+    def prime_initial_capture(self):
+        """Warm one desktop sample before the first animated glass reveal."""
+        if (self.initial_capture_attempted or self.backdrop is not None or not self.isVisible() or
+                not self.glass_enabled or capture_mode() or energy_saver_active()):
+            return
+        if not apply_capture_affinity(self, live=True):
+            return
+        try:
+            self.backdrop = DockBackdropCapture()
+        except (OSError, RuntimeError):
+            apply_capture_affinity(self, live=False)
+            return
+        self.initial_capture_attempted = True
+        # Submit a single request. The worker initializes off-thread and then
+        # waits; the first reveal still discards this possibly stale sample.
+        self.capture()
 
     def prepare_layer(self):
         if capture_mode() or not self.isVisible() or (self.progress < 1.0 and self.transition_to <= 0):

@@ -387,6 +387,24 @@ with TemporaryDirectory() as temporary:
     assert center.dock.panel.key == 'settings' and center.window.isVisible()
     center.dock.panel.close()
     dock = center.dock
+    with patch.object(dock, 'prime_initial_capture') as prime_capture:
+        center.show_edge_dock()
+        prime_capture.assert_called_once_with()
+    previous_glass = dock.glass_enabled
+    dock.glass_enabled = True
+    with patch('edge_dock.DockBackdropCapture') as capture_worker, \
+            patch('edge_dock.apply_capture_affinity', return_value=True), \
+            patch('edge_dock.client_bounds', return_value=(10, 20, 55, 600)), \
+            patch('edge_dock.energy_saver_active', return_value=False):
+        capture_worker.return_value.latest = None
+        dock.prime_initial_capture()
+        dock.prime_initial_capture()
+        capture_worker.assert_called_once_with()
+        capture_worker.return_value.submit.assert_called_once_with(((10, 20, 55, 600), None))
+        assert not dock.capture_timer.isActive()
+    dock.backdrop = None
+    dock.initial_capture_attempted = False
+    dock.glass_enabled = previous_glass
     dock.pure = True
     dock.progress = (dock.HANDLE_FADE_END + .76) / 2
     dock.layout_icons()
