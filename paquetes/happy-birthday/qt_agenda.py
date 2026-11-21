@@ -168,8 +168,6 @@ class Agenda(MiniappDialog):
         self.day.setToolTip('Día-mes-año o día-mes. También acepta barras, puntos o espacios.')
         self.name = QLineEdit(placeholderText='Ej. Gabriel')
         self.name.setAccessibleName('Nombre')
-        for field in (self.day, self.name):
-            field.setStyleSheet('QLineEdit { placeholder-text-color: rgba(120,120,120,205); }')
         form.addWidget(self.day, 3)
         form.addWidget(self.name, 3)
         self.submit_button = action(form, 'Añadir', self.submit, 'primary')

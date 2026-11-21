@@ -94,10 +94,9 @@ def clear_styles(scope='', light=False, frost_controls=False, live_controls=Fals
         rule('QMenu, QComboBox QAbstractItemView', 'background: #363636; color: #fafafa;'),
     )
     if live_controls:
-        light_controls = frost_controls or light
-        control_ink = '#202731' if light_controls else '#f7f7f7'
-        placeholder = '#4a5564' if light_controls else '#dadada'
-        disabled = '#596374' if light_controls else '#cdcdcd'
+        control_ink = '#202731' if light else '#ffffff'
+        placeholder = '#4a5564' if light else '#dadada'
+        disabled = '#596374' if light else '#cdcdcd'
         styles += (
             rule(controls + ', QPushButton:hover, QPushButton:pressed, QPushButton:checked, QPushButton#quiet, QPushButton#quiet:hover, QPushButton#primary, QPushButton#primary:hover, QPushButton#more, QPushButton#heroAction, QPushButton#destructive, QFrame#centerTabs QPushButton#nav, QFrame#centerTabs QPushButton#nav:checked, QFrame#appCard QPushButton',
                  f'background: transparent; color: {control_ink}; placeholder-text-color: {placeholder}; border: 1px solid transparent;'),
@@ -181,7 +180,8 @@ def stylesheet(dark=False, glass=True, monochrome=False, neutral=False):
     QPushButton#heroAction {{ color: white; background: rgba(233,240,255,40); border-color: rgba(233,240,255,125); }}
     QPushButton#heroAction:hover, QPushButton#heroAction:focus {{ background: rgba(233,240,255,75); }}
     QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPlainTextEdit, QListWidget {{
-        background: {field}; border: 1px solid {stroke}; border-radius: 11px; padding: 7px 10px; min-height: 19px;
+        background: {field}; color: {ink}; placeholder-text-color: {muted};
+        border: 1px solid {stroke}; border-radius: 11px; padding: 7px 10px; min-height: 19px;
     }}
     QTimeEdit:disabled {{ color: {muted}; background: {base}; }}
     QComboBox QAbstractItemView, QListWidget {{ color: {ink}; background: {field}; selection-background-color: {pressed}; selection-color: {ink}; }}

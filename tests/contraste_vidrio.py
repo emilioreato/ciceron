@@ -186,12 +186,12 @@ for widget in identity.findChildren(QLabel):
     assert contrast(QColor('#f0f2f6'), sample(point.x(), point.y())) >= 4.5
 assert sample(180, 25).lightness() > 220, 'Liquid Glass V3 debe reflejar correctamente el fondo claro.'
 
-# A real bright frame must select matching light material and dark ink, without
-# changing the frosted controls or the label and button treatments on dark frames.
-light_style = clear_styles(light=True, live_controls=True)
-assert 'color: #252a32;' in light_style and 'color: #202731;' in light_style
-dark_style = clear_styles(live_controls=True)
-assert 'color: #f0f2f6;' in dark_style and 'color: #f7f7f7;' in dark_style
+# Frosted controls must take their ink from the detected desktop tone.
+dark_frost_style = clear_styles(frost_controls=True, live_controls=True)
+light_frost_style = clear_styles(light=True, frost_controls=True, live_controls=True)
+assert 'color: #ffffff; placeholder-text-color: #dadada;' in dark_frost_style
+assert 'color: #202731; placeholder-text-color: #4a5564;' in light_frost_style
+assert 'color: #f0f2f6;' in dark_frost_style and 'color: #252a32;' in light_frost_style
 window.setProperty('frostControls', False)
 assert layer.set_frame(source.copy()) and layer.light
 result = layer.grabFramebuffer()

@@ -11,13 +11,13 @@ from center_ui import (UI_VERSIONS, AppCardIdentity, clear_styles, CenterWindow,
                        LibraryBanner, PreferenceBox, dark_mode, panel, scrolled_page, stylesheet)
 from visual_playground import VisualDialog
 from pathlib import Path
-from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, QSize, Qt,
+from PySide6.QtCore import (QAbstractNativeEventFilter, QFileSystemWatcher, QPoint, QRect, QSize, Qt,
                             QTimer, QDate, QTime, Signal)
 from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QPen
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QDateEdit, QTimeEdit, QCheckBox, QButtonGroup, QComboBox,
     QFrame, QFileDialog, QFileIconProvider, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
-    QAbstractSpinBox, QCalendarWidget, QStackedWidget, QToolButton)
+    QAbstractSpinBox, QCalendarWidget, QStackedWidget, QStyle, QStyleOptionButton, QToolButton)
 from package_ui import edit_settings, install_packages
 from data_ui import export_dialog, import_dialog
 from power_state import low_power
@@ -252,20 +252,50 @@ def taskbar_y(screen, work, height):
 class ClearCheckBox(QCheckBox):
     """Keep the native checkbox behavior with a visible, understated indicator."""
     def paintEvent(self, event):
-        painter=QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        checked=self.isChecked(); enabled=self.isEnabled(); y=(self.height()-16)//2
-        painter.setPen(QPen(QColor('#343943' if checked else '#a1a8b3'),1))
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        style = self.style()
+        native_indicator = style.subElementRect(QStyle.SubElement.SE_CheckBoxIndicator,
+                                                option, self)
+        if not self.text():
+            indicator = QRect(QPoint(0, 0), native_indicator.size())
+            indicator.moveCenter(self.contentsRect().center())
+        else:
+            indicator = native_indicator
+        if indicator.isEmpty():
+            width = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, option, self)
+            height = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight, option, self)
+            indicator = QRect(self.contentsRect().left(), self.contentsRect().top(), width, height)
+            indicator.moveTop(self.contentsRect().center().y() - indicator.height() // 2)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        checked = self.isChecked()
+        enabled = self.isEnabled()
+        painter.setPen(QPen(QColor('#343943' if checked else '#a1a8b3'), 1))
         painter.setBrush(QColor('#343943' if checked else '#ffffff'))
-        painter.drawRoundedRect(1,y,15,15,4,4)
+        indicator_rect = indicator.adjusted(0, 0, -1, -1)
+        radius = min(4, indicator_rect.width() / 4, indicator_rect.height() / 4)
+        painter.drawRoundedRect(indicator_rect, radius, radius)
         if checked:
-            pen=QPen(QColor('#ffffff')); pen.setWidthF(1.7); painter.setPen(pen)
-            painter.drawLine(4,y+8,7,y+11); painter.drawLine(7,y+11,13,y+4)
-        painter.setPen(self.palette().windowText().color() if enabled else QColor('#8b95a7'))
-        painter.drawText(26,0,max(0,self.width()-26),self.height(),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,self.text())
+            pen = QPen(QColor('#ffffff'))
+            pen.setWidthF(max(1.2, min(indicator.width(), indicator.height()) * 0.12))
+            painter.setPen(pen)
+            x, y = indicator.x(), indicator.y()
+            width, height = indicator.width(), indicator.height()
+            painter.drawLine(round(x + width * .22), round(y + height * .52),
+                             round(x + width * .43), round(y + height * .72))
+            painter.drawLine(round(x + width * .43), round(y + height * .72),
+                             round(x + width * .78), round(y + height * .28))
+        if self.text():
+            text_rect = style.subElementRect(QStyle.SubElement.SE_CheckBoxContents,
+                                             option, self)
+            alignment = Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+            painter.setPen(self.palette().windowText().color() if enabled else QColor('#8b95a7'))
+            painter.drawText(text_rect, alignment, self.text())
         if self.hasFocus():
-            painter.setPen(QPen(QColor('#8e96a3'),1,Qt.PenStyle.DotLine))
-            painter.setBrush(Qt.BrushStyle.NoBrush); painter.drawRoundedRect(0,y-1,17,17,4,4)
+            painter.setPen(QPen(QColor('#8e96a3'), 1, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(indicator.adjusted(-1, -1, 1, 1), 4, 4)
         painter.end()
 
 class CountdownButton(QPushButton):
@@ -1697,8 +1727,8 @@ class App:
         words=QLineEdit(str(self.cfg['words'])); box.addWidget(words)
         words.setAccessibleName('Palabras de aviso')
         words.setToolTip('Palabras separadas por comas que Cicerón busca en el título de la ventana activa.')
-        top=QCheckBox('Mantener el contador sobre otras ventanas'); top.setChecked(bool(self.cfg['topmost'])); box.addWidget(top)
-        startup=QCheckBox('Iniciar Cicerón minimizado con Windows')
+        top=ClearCheckBox('Mantener el contador sobre otras ventanas'); top.setChecked(bool(self.cfg['topmost'])); box.addWidget(top)
+        startup=ClearCheckBox('Iniciar Cicerón minimizado con Windows')
         old_startup=None; old_startup_type=None; startup_exists=False
         if not development_mode():
             try:

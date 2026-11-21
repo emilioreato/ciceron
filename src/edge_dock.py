@@ -335,6 +335,7 @@ class AttachedPanel(QWidget):
         self.capture_enabled = False
         self.capture_tile = None
         self.pending_geometry = None
+        self.preferred_width = 320
         self.layer = DockOptics(self)
         self.layer.hide()
         self.apply_glass_tone(not dock.theme_dark)
@@ -375,7 +376,8 @@ class AttachedPanel(QWidget):
                                                else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.embed(content)
         margin = 2 * self.CONTENT_MARGIN
-        self.resize(preferred.width() + margin, preferred.height() + margin)
+        self.preferred_width = preferred.width() + margin
+        self.resize(self.preferred_width, preferred.height() + margin)
         if isinstance(content, QDialog):
             content.finished.connect(self.dialog_finished)
         if hasattr(content, 'preferred_size_changed'):
@@ -1400,7 +1402,8 @@ class EdgeDock(QWidget):
         anchor = anchors.get(panel.key, self.gear)
         seam = self.x() + round(self.optic_rect().left()) + panel.INSET - self.PANEL_GAP
         available = seam - area.left()
-        width = min(panel.width(), max(1, available))
+        preferred_width = getattr(panel, 'preferred_width', panel.width())
+        width = min(preferred_width, max(1, available))
         height = min(height, area.height() - 12)
         x = seam - width
         if keep_top:

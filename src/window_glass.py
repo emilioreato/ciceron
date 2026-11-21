@@ -160,7 +160,7 @@ def draw_clear_material(layer, program, uniforms, rect, sample, physical, radius
                 continue
             grouped = isinstance(widget, AppCardIdentity)
             is_label = isinstance(widget, (QLabel, QCheckBox))
-            checkbox_control = isinstance(widget, QCheckBox) and v3_controls
+            checkbox_control = isinstance(widget, QCheckBox)
             if is_label and isinstance(widget.parentWidget(), AppCardIdentity):
                 continue
             is_text = grouped or (is_label and not checkbox_control)

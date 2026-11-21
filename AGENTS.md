@@ -4,6 +4,7 @@
 
 - Antes de editar, ejecuta `git status --short --branch` y revisa los cambios relevantes con `git diff`. Este repositorio puede tener trabajo concurrente.
 - No uses `git reset --hard`, `git clean`, `git checkout` para reemplazar archivos, `git restore` sobre cambios ajenos ni limpiezas recursivas. No borres archivos ignorados, paquetes compilados, copias de seguridad ni datos del usuario para “limpiar” el proyecto.
+- `backups/` contiene copias locales ignoradas por Git; no forma parte del código activo. No uses esos archivos como referencia de implementación salvo petición explícita, y no borres ni muevas esas copias.
 - Si otro cambio toca el mismo archivo, léelo e intégralo de forma localizada. No sustituyas el archivo por una versión antigua ni descartes cambios sin autorización explícita.
 - Al terminar, vuelve a comprobar `git status --short --branch` y `git diff --check`. Resume qué quedó modificado y qué pruebas corriste. No afirmes que está libre de errores: describe la evidencia y sus límites.
 

@@ -8,7 +8,7 @@ import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from PySide6.QtCore import QEvent, QPoint, QPointF, QSize
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize
 from PySide6.QtGui import QEnterEvent, QKeyEvent, QWheelEvent
 from PySide6.QtTest import QTest
 
@@ -620,6 +620,19 @@ with TemporaryDirectory() as temporary:
     assert panel is not None and panel.key == 'effects'
 
     initial_height = panel.height()
+    original_geometry = panel.geometry()
+    seam = dock.x() + round(dock.optic_rect().left()) + panel.INSET - dock.PANEL_GAP
+    narrow_screen = SimpleNamespace(availableGeometry=lambda: QRect(seam - 120, 0, 120, 900))
+    wide_screen = SimpleNamespace(availableGeometry=lambda: QRect(seam - 2000, 0, 2000, 1100))
+    with patch.object(dock, 'current_screen', return_value=narrow_screen):
+        clamped = dock.panel_geometry(panel, initial_height)
+    assert clamped.width() == 120
+    panel.setGeometry(clamped)
+    with patch.object(dock, 'current_screen', return_value=wide_screen):
+        restored = dock.panel_geometry(panel, initial_height)
+    assert restored.width() == panel.preferred_width
+    panel.setGeometry(original_geometry)
+
     with patch('edge_dock.client_bounds', return_value=(0, 0, panel.width(), initial_height)), \
             patch.object(panel.content, 'sizeHint', return_value=QSize(260, initial_height + 30)) as size_hint, \
             patch.object(dock, 'capture'):
